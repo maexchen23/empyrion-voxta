@@ -18,6 +18,7 @@ namespace VoxtaBridge
     public partial class BridgeMod
     {
         static volatile TraderIndex traderIndex;
+        static volatile PoiTerminals poiTerminals;
         static volatile GalaxyOdds galaxyOdds;
         static string saveGameDir;
 
@@ -51,6 +52,25 @@ namespace VoxtaBridge
                 if (factions != null) using (var r = new StreamReader(factions)) idx.LoadFactions(r);
                 var rep = Cfg("DefReputation.ecf");
                 if (rep != null) using (var r = new StreamReader(rep)) idx.LoadDefReputation(r);
+                try
+                {
+                    var dlg = Cfg("Dialogues.ecf");
+                    var dlgText = Cfg("Dialogues.csv");
+                    if (dlg != null && dlgText != null)
+                    {
+                        var terms = new PoiTerminals();
+                        using (var r = new StreamReader(dlg)) terms.LoadDialogues(r);
+                        using (var r = new StreamReader(dlgText)) terms.LoadTexts(r);
+                        poiTerminals = terms;
+                        Log($"poi terminals: {terms.InitCount} terminals in {terms.DialogueCount} dialogues");
+                        var missions = new TradeMissions();
+                        using (var r = new StreamReader(dlg)) missions.LoadDialogues(r);
+                        using (var r = new StreamReader(dlgText)) missions.LoadTexts(r);
+                        tradeMissions = missions;
+                        Log($"trade missions: {missions.Count} trader mission dialogues");
+                    }
+                }
+                catch (Exception e) { Log($"poi terminals: {e.Message}"); }
 
                 var root = string.IsNullOrEmpty(scenario) ? content : scenario;
                 var pfDir = Path.Combine(root, "Playfields");
@@ -202,6 +222,11 @@ namespace VoxtaBridge
                 try { ReadSector(Path.Combine(save, "global.db"), at, out px, out py, out pz); } catch (Exception e) { dbNote = "at: " + e.Message; }
             // only a player faction (group 0) has its own row in game.dat; others fall back to the starting standings
             var standingKey = pFacGroup == 0 ? pFacId : -1;
+            // trader missions: which known factories trade already (unlocks are per factory instance)
+            ILookup<long, QuestRow> questsByPoi = null;
+            if (player != null && save != null && tradeMissions != null)
+                try { questsByPoi = ReadQuests(Path.Combine(save, "global.db"), player.EntityId).ToLookup(q => q.PoiId); }
+                catch (Exception e) { dbNote = (dbNote == null ? "" : dbNote + "; ") + "trader missions: " + e.Message; }
 
             if (player != null)
             {
@@ -239,7 +264,9 @@ namespace VoxtaBridge
                         return (r.poi, r.trader, fac, st, ly);
                     })
                     .ToList();
-                var knownOk = knownList.Where(k => TraderIndex.NeutralOrBetter(k.st)).OrderBy(k => k.ly ?? double.MaxValue).ToList();
+                // a factory whose trades are still locked counts as LockedPenaltyLy further away: an unlocked one a bit further is the better tip
+                var knownOk = knownList.Where(k => TraderIndex.NeutralOrBetter(k.st))
+                    .OrderBy(k => (k.ly ?? double.MaxValue / 2) + (TradeLock(k.poi.Prefab, k.poi.Id, questsByPoi) != null ? LockedPenaltyLy : 0)).ToList();
                 var knownBlocked = knownList.Where(k => !TraderIndex.NeutralOrBetter(k.st)).ToList();
                 if (knownOk.Count > 0)
                 {
@@ -250,6 +277,8 @@ namespace VoxtaBridge
                         if (k.ly.HasValue) j.Prop("ly", Math.Round(k.ly.Value, 1));
                         if (k.fac != null) j.Prop("faction", k.fac.Label);
                         if (k.st.HasValue) j.Prop("tier", TraderIndex.Tier(k.st.Value));
+                        if (TradeLock(k.poi.Prefab, k.poi.Id, questsByPoi) is string lockText) j.Prop("tradesLocked", lockText);
+                        else if (GatedFamily(k.poi.Prefab) != null) j.Prop("tradesUnlocked", true);
                         j.EndObj();
                     }
                     j.EndArr();
@@ -294,6 +323,7 @@ namespace VoxtaBridge
                         j.Obj().Prop("name", first.pre.Display ?? TraderIndex.SplitWords(first.pre.Prefab));
                         if (first.fac != null) j.Prop("faction", first.fac.Label);
                         if (first.st.HasValue) j.Prop("tier", TraderIndex.Tier(first.st.Value));
+                        if (g.Any(p => GatedFamily(p.pre.Prefab) != null)) j.Prop("tradeMission", true);
                         var kinds = g.SelectMany(p => p.spawns).Select(sp => sp.Kind).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                         j.Key("where").Arr();
                         foreach (var k in kinds.Take(MaxKinds)) j.Val(k);

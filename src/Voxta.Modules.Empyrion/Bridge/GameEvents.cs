@@ -4,7 +4,49 @@ namespace Voxta.Modules.Empyrion.Bridge;
 /// <param name="Name">Short event id, e.g. <c>LowOxygen</c>.</param>
 /// <param name="Description">What happened, written for the character.</param>
 /// <param name="Important">True: the character should react out loud. False: it only needs to know.</param>
-public sealed record GameEvent(string Name, string Description, bool Important);
+/// <param name="MissionKey">For new-mission events: the mission, so the description can be completed (what is in reach).</param>
+public sealed record GameEvent(string Name, string Description, bool Important, string? MissionKey = null);
+
+/// <summary>
+/// Which trader mission events the character speaks up about (module settings); the others are passed on silently.
+/// "Factory": the trader's trades wait for the mission (incl. its follow-ups); "trader": a shop that trades anyway.
+/// </summary>
+public sealed record MissionAnnounce(bool NewFactory = true, bool NewTrader = false, bool DoneFactory = true, bool DoneTrader = false, bool PursuedDone = true,
+    bool ItemsReady = true);
+
+/// <summary>
+/// Smooths over the seconds of a warp: on the new playfield the player is briefly on no structure until the ship
+/// arrives there too, which would read as "left the ship, now on foot" and then "boarded the ship". Only then (ship
+/// gone and the playfield changed) the last ship state is kept, for at most <see cref="HoldFor"/>. On the same playfield
+/// a missing ship is a real exit and shows at once.
+/// </summary>
+public sealed class WarpSmoother
+{
+    public static readonly TimeSpan HoldFor = TimeSpan.FromSeconds(60);
+
+    private GameState? _lastInShip;
+    private DateTimeOffset? _lostAt;
+
+    /// <summary>The state to show and diff: <paramref name="raw"/>, or it with the held ship while a warp may be running.</summary>
+    public GameState? Apply(GameState? raw, DateTimeOffset now)
+    {
+        if (raw == null) { Reset(); return null; }
+        if (raw.InShip) { _lastInShip = raw; _lostAt = null; return raw; }
+        if (_lastInShip == null) return raw;
+        if (raw.Playfield == _lastInShip.Playfield) { Reset(); return raw; } // same playfield: really got out
+        _lostAt ??= now;
+        if (now - _lostAt.Value > HoldFor) { Reset(); return raw; }
+        var held = _lastInShip;
+        return raw with
+        {
+            ShipName = held.ShipName, ShipType = held.ShipType, IsPilot = held.IsPilot,
+            ShipFuel = held.ShipFuel, ShipFuelMax = held.ShipFuelMax, ShipOxygen = held.ShipOxygen, ShipOxygenMax = held.ShipOxygenMax,
+            ShipPentaxid = held.ShipPentaxid, ShipPentaxidMax = held.ShipPentaxidMax, ShieldActive = held.ShieldActive, Powered = held.Powered,
+        };
+    }
+
+    private void Reset() { _lastInShip = null; _lostAt = null; }
+}
 
 /// <summary>
 /// Compares two polls and names what changed. Only crossings count (a tank that was already empty when
@@ -19,7 +61,7 @@ public static class GameEvents
     /// <param name="prev">State of the previous poll; null when the player was offline or this is the first poll.</param>
     /// <param name="next">State now; null when the player is offline.</param>
     /// <param name="firstPoll">True for the first poll of a chat: nothing is reported, the context covers it.</param>
-    public static List<GameEvent> Diff(GameState? prev, GameState? next, bool firstPoll = false)
+    public static List<GameEvent> Diff(GameState? prev, GameState? next, bool firstPoll = false, MissionAnnounce? announce = null)
     {
         var events = new List<GameEvent>();
         if (firstPoll) return events;
@@ -38,7 +80,8 @@ public static class GameEvents
 
         if (prev.Playfield != next.Playfield && next.Playfield != null)
         {
-            var desc = $"Arrived at {next.Playfield}";
+            var warped = prev.InShip && next.InShip && prev.ShipName == next.ShipName;
+            var desc = warped ? $"Warped aboard the {next.ShipType} '{next.ShipName}' to {next.Playfield}" : $"Arrived at {next.Playfield}";
             if (next.PlayfieldType != null) desc += $" ({next.PlayfieldType})";
             if (next.System != null && next.System != prev.System) desc += $" in the {next.System} system";
             desc += $", coming from {prev.Playfield}.";
@@ -69,6 +112,39 @@ public static class GameEvents
 
             if (prev.ShieldActive == true && next.ShieldActive == false)
                 events.Add(new("ShieldDown", $"The shield of '{next.ShipName}' went down.", true));
+        }
+
+        announce ??= new MissionAnnounce();
+        if (prev.PursuingLine != null && prev.PursuingStatus is "open" or "locked" && next.PursuingStatus == "done")
+            events.Add(new("PursuedMissionDone", $"The pursued trader mission is done: {next.PursuingLine}.", announce.PursuedDone));
+
+        if (!prev.PursuingReady && next.PursuingReady && prev.PursuingLine != null && prev.PursuingLine == next.PursuingLine)
+            events.Add(new("PursuedItemsReady",
+                $"The player now carries everything the pursued mission wants: {next.PursuingLine}. They can hand it in at the trader.", announce.ItemsReady));
+
+        // new trader missions: only against a known earlier list (the first list of a chat is the baseline)
+        if (prev.OpenMissions is { } before && next.OpenMissions is { } now)
+        {
+            var known = before.Select(m => m.Key).ToHashSet();
+            foreach (var m in now.Where(m => !known.Contains(m.Key)))
+            {
+                var factory = m.Kind == "factory";
+                var speak = factory ? announce.NewFactory : announce.NewTrader;
+                events.Add(new(factory ? "NewFactoryMission" : "NewTraderMission",
+                    $"The player just got a new {(factory ? "factory" : "trader")} mission: {m.Line}." +
+                    (speak ? " Mention it briefly; empyrion_pursue_quest keeps track of it if they want." : ""), speak, m.Key));
+            }
+            // gone from the open list = handed in (missions can't be dropped); the pursued one has its own event
+            var open = now.Select(m => m.Key).ToHashSet();
+            foreach (var m in before.Where(m => !open.Contains(m.Key) && !m.Pursued))
+            {
+                var factory = m.Kind == "factory";
+                var where = m.Where ?? m.Line;
+                var desc = factory
+                    ? $"The player completed the factory mission for {where}{(m.FollowUp ? "" : "; its trades are unlocked now")}."
+                    : $"The player completed the job for {where}.";
+                events.Add(new(factory ? "FactoryMissionDone" : "TraderMissionDone", desc, factory ? announce.DoneFactory : announce.DoneTrader));
+            }
         }
 
         if (prev.FactoryBlueprint == next.FactoryBlueprint && next.FactoryBlueprint != null

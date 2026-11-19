@@ -3,7 +3,7 @@ name: empyrion-pois
 description: "Points of interest on the current planet or sector: classes, danger, factions and standing, complexes, and the 'Nearby' line. Load before talking about what is around, where to go, or whether a place is dangerous."
 metadata:
   augmentations: empyrion
-  tools: empyrion_scan_pois empyrion_get_structure empyrion_poi_trade
+  tools: empyrion_scan_pois empyrion_get_structure empyrion_poi_trade empyrion_poi_terminal
 ---
 
 # Points of interest
@@ -27,3 +27,10 @@ metadata:
 - Buildings of one faction close together are one **complex** with summed turrets; its trading places are named.
 - Unfriendly or Hated standing means the turrets fire.
 - Answer briefly: the few POIs that matter for what the player is doing, not the whole list.
+
+## Info terminals
+
+- The scan marks POIs with an info terminal (`info terminal 'Reactor Control'`). `empyrion_poi_terminal` reads its
+  screens: lore, warnings, what is inside, codes. Only for POIs the player is at (within 2 km) or has visited, like in
+  the game.
+- Retell what matters for the player (a danger, a hint, what to do), in character; don't read every screen out.

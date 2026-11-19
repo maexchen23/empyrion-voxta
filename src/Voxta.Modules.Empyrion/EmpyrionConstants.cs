@@ -25,6 +25,9 @@ public static class EmpyrionConstants
     public const string SetActiveStructureTool = "empyrion_set_active_structure";
     public const string SystemInfoTool = "empyrion_system_info";
     public const string PoiTradeTool = "empyrion_poi_trade";
+    public const string PoiTerminalTool = "empyrion_poi_terminal";
+    public const string ListQuestsTool = "empyrion_list_quests";
+    public const string PursueQuestTool = "empyrion_pursue_quest";
     public const string MarkStarsTool = "empyrion_mark_stars";
     public const string ClearMarksTool = "empyrion_clear_marks";
     public const string AddMapMarkerTool = "empyrion_add_map_marker";

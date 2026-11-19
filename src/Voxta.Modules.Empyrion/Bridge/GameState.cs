@@ -3,6 +3,13 @@ using System.Text;
 
 namespace Voxta.Modules.Empyrion.Bridge;
 
+/// <summary>One item a mission wants: internal name, display name, count, token id for tokens.</summary>
+public sealed record MissionNeed(string Item, string Name, int Count, int? TokenId = null);
+
+/// <summary>One open trader mission: key = trader + mission number; kind "factory" (its trades wait for it) or "trader".</summary>
+public sealed record OpenMission(string Key, string Kind, string Line, string? Where = null, bool FollowUp = false, bool Pursued = false,
+    IReadOnlyList<MissionNeed>? Needs = null);
+
 /// <summary>Compact game state of one player, taken from one bridge poll.</summary>
 public sealed record GameState
 {
@@ -21,7 +28,13 @@ public sealed record GameState
     public double? Radiation { get; init; }
     public double? RadiationMax { get; init; }
 
+    /// <summary>The own ship/base the player is in or at (see <see cref="Standing"/>).</summary>
     public string? ShipName { get; init; }
+    /// <summary>
+    /// Only at the structure: on its hull or next to it, inside its bounding box (the bridge's "standing"), not inside
+    /// it (the game reports that). Not "in the ship": no boarding/leaving events, no tank events.
+    /// </summary>
+    public bool Standing { get; init; }
     public string? ShipType { get; init; }
     public bool IsPilot { get; init; }
     public double? ShipFuel { get; init; }
@@ -49,10 +62,20 @@ public sealed record GameState
     public string? VisitingType { get; init; }
     public string? VisitingOwner { get; init; }
 
+    /// <summary>The trader mission the player pursues (one line, from the bridge), its status (open, locked, done, gone).</summary>
+    public string? PursuingLine { get; init; }
+    public string? PursuingStatus { get; init; }
+    /// <summary>The pursued mission's items with how many the player carries (personal inventory: bag + toolbar).</summary>
+    public IReadOnlyList<(MissionNeed Need, int Have)>? PursuingProgress { get; init; }
+    /// <summary>Everything the pursued (open) mission wants is in the personal inventory.</summary>
+    public bool PursuingReady => PursuingStatus is "open" or "locked" && PursuingProgress is { Count: > 0 } pr && pr.All(x => x.Have >= x.Need.Count);
+    /// <summary>The player's open trader missions (null = not known this poll, e.g. an older bridge).</summary>
+    public IReadOnlyList<OpenMission>? OpenMissions { get; init; }
+
     public string? FactoryBlueprint { get; init; }
     public double? FactoryRemainingS { get; init; }
 
-    public bool InShip => ShipName != null;
+    public bool InShip => ShipName != null && !Standing;
 
     public static double? Percent(double? value, double? max) =>
         value is { } v && max is > 0 ? Math.Clamp(v / max.Value * 100, 0, 100) : null;
@@ -87,7 +110,11 @@ public sealed record GameState
             if (tanks.Count > 0) st += "; tanks: " + string.Join(", ", tanks);
             return st;
         }
-        if (InShip)
+        if (Standing && ShipName != null)
+        {
+            sb.AppendLine($"On foot at the {ShipType} '{ShipName}' (outside, on its hull or next to it){(ActiveName == null ? Status() : "")}");
+        }
+        else if (InShip)
         {
             // power/shield/tanks belong to the active structure: here only when the player is aboard that one
             sb.AppendLine($"{(IsPilot ? "Piloting" : "Aboard")} {ShipType} '{ShipName}'{(ActiveName == null ? Status() : "")}");
@@ -108,6 +135,15 @@ public sealed record GameState
             sb.AppendLine($"Active structure (containers, transfers, crafting): {ActiveType} '{ActiveName}' ({why}{away}){Status()}");
         }
         if (ActiveNote != null) sb.AppendLine($"Note: {ActiveNote}.");
+
+        if (PursuingLine != null)
+        {
+            var progress = PursuingReady ? " (all of it is in the player's inventory: ready to hand in)"
+                : PursuingProgress is { Count: > 0 } pr && PursuingStatus is "open" or "locked"
+                    ? " (in the player's inventory: " + string.Join(", ", pr.Select(x => $"{Math.Min(x.Have, x.Need.Count)}/{x.Need.Count} {x.Need.Name}")) + ")"
+                    : "";
+            sb.AppendLine(PursuingStatus is "done" or "gone" ? $"Pursued mission: {PursuingLine}." : $"Pursuing: {PursuingLine}{progress}.");
+        }
 
         if (FactoryBlueprint != null)
             sb.AppendLine(FactoryRemainingS is > 0

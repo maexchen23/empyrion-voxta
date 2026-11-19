@@ -111,7 +111,9 @@ namespace VoxtaBridge
                     foreach (var t in trading) j.Obj().Prop("name", t.Name).Prop("traders", t.Traders).Prop("distance", Math.Round(t.Distance)).EndObj();
                     j.EndArr();
                 }
-                if (lead.Kind == PoiKind.Abandoned && lead.TerminalDialogue != null) j.Prop("terminal", lead.TerminalDialogue);
+                // any POI with a readable info terminal (bunkers, reactors, launch controllers), not only abandoned ones
+                var term = g.Members.FirstOrDefault(m => m.TerminalDialogue != null && (poiTerminals?.Pages(m.TerminalDialogue, 1).Count ?? 0) > 0);
+                if (term != null) j.Prop("terminal", poiTerminals.TerminalName(term.TerminalDialogue) ?? "info terminal").Prop("terminalPoi", term.Name);
                 if (!g.Members.Any(m => m.Discovered)) j.Prop("onlyInRange", true);
                 j.EndObj();
             }

@@ -40,6 +40,8 @@ namespace VoxtaBridge
         public int Traders;
         public string PoiDialogue;
         public bool HasGin;
+        /// <summary>Trader mission dialogues the prefab's NPCs start (<c>TD_X_Start</c>), for the trade missions.</summary>
+        public List<string> TradeDialogues = new List<string>();
         /// <summary>Faction id (Factions.ecf / Entities.facgroup), -1 unknown, 255 none.</summary>
         public int Faction = -1;
         public string FactionName;

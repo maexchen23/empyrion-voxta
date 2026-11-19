@@ -101,7 +101,8 @@ namespace VoxtaBridge
             }
 
             if (legacy == null || api == null || DateTime.UtcNow < nextLegacyRefresh) return;
-            nextLegacyRefresh = DateTime.UtcNow.AddSeconds(5);
+            // every second: its position is the fresh one for players on foot (see LivePosition.cs)
+            nextLegacyRefresh = DateTime.UtcNow.AddSeconds(1);
             try
             {
                 // GetPlayerEntityIds also lists known offline players; asking for them only yields a
@@ -147,7 +148,16 @@ namespace VoxtaBridge
                         if (!string.IsNullOrEmpty(pi.bpInFactory))
                             j.Key("factory").Obj().Prop("blueprint", pi.bpInFactory).Prop("remainingS", pi.bpRemainingTime).EndObj();
                         var json = j.EndObj().ToString();
-                        lock (sync) { legacyPlayerInfo[pi.entityId] = json; legacyEvents++; }
+                        lock (sync)
+                        {
+                            legacyPlayerInfo[pi.entityId] = json; legacyEvents++;
+                            legacyPos[pi.entityId] = (pi.playfield, DateTime.UtcNow, pi.pos.x, pi.pos.y, pi.pos.z);
+                        }
+                        RecordTokens(pi);
+                        break;
+
+                    case CmdId.Event_PdaStateChange when data is PdaStateInfo psi:
+                        RecordPda(psi);
                         break;
 
                     case CmdId.Event_Error:
@@ -188,6 +198,7 @@ namespace VoxtaBridge
                 var s = Encoding.UTF8.GetString(data);
                 if (s.StartsWith(MappingPrefix)) { ReceiveMapping(s.Substring(MappingPrefix.Length)); return; }
                 if (s.StartsWith(ReplyPrefix)) { ReceiveReply(s.Substring(ReplyPrefix.Length)); return; }
+                if (s.StartsWith(BoxesPrefix)) { ReceiveBoxes(s.Substring(BoxesPrefix.Length)); return; }
                 if (!s.StartsWith(PacketPrefix)) return; // packet of another mod
                 lock (sync)
                 {
@@ -260,6 +271,9 @@ namespace VoxtaBridge
                 if (path == "/active") return HandleSetActive(body);
                 if (path == "/system") return HandleSystem(body);
                 if (path == "/poi-trade") return HandlePoiTrade(body);
+                if (path == "/poi-terminal") return HandlePoiTerminal(body);
+                if (path == "/quests") return HandleQuests(body);
+                if (path == "/quest-pursue") return HandlePursueQuest(body);
                 if (path == "/marks") return HandleMarks(body);
                 if (path == "/microjump") return HandleMicroJump(body);
                 if (path == "/debug/jump") return HandleDebugJump(body);
@@ -325,6 +339,10 @@ namespace VoxtaBridge
             if (path == "/status")
             {
                 var j = new Json().Obj();
+                List<DediPlayer> online;
+                lock (sync) online = dediPlayers.Values.Where(x => x.Online).ToList();
+                if (tradeMissions != null && online.Count > 0) WriteQuestStatus(j, online); // global.db reads: outside the lock
+                if (online.Count > 0) WriteLive(j, online);
                 lock (sync)
                 {
                     j.Key("players").Raw(playersJson);
@@ -394,6 +412,7 @@ namespace VoxtaBridge
                     FlushGives();
                     FlushApi1Outbox();
                     FlushBookmarkPushes();
+                    QuestRecorderTick();
                     if (now < nextDediRefresh) return;
                     nextDediRefresh = now.AddMilliseconds(config?.SnapshotIntervalMs ?? 2000);
                     RefreshDediPlayers();
@@ -412,7 +431,11 @@ namespace VoxtaBridge
                         nextMappingSend = now.AddMinutes(10);
                         SendMappingToDedi(loaded[0].Name);
                     }
-                    foreach (var pf in loaded) SendSnapshot(pf);
+                    foreach (var pf in loaded)
+                    {
+                        SendSnapshot(pf);
+                        try { SendBoxes(pf); } catch (Exception e) { Log($"boxes for {pf.Name} failed: {e.Message}"); }
+                    }
                     ForgetAbsentPlayers(loaded);
                     ScanSizes(loaded, now);
                 }

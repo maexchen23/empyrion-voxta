@@ -18,13 +18,42 @@ Tested with the **Reforged Eden 2** scenario; most features also work with vanil
   have 500 rounds".
 - **Trading**: where to buy an item (known sellers, planets and stars where such a trader can be), what a trading place
   sells or buys, cheap or overpriced.
-- **Points of interest**: what is around, faction standing, turrets, which places are dangerous.
+- **Points of interest**: what is around, faction standing, turrets, which places are dangerous, info terminals,
+  planet descriptions.
+- **Trader missions**: remembers the missions factories and shops gave you (the game doesn't track them), what they
+  want, rewards and work orders; keeps one you pursue in view, counts its items in your inventory and says when you
+  can hand it in.
 - **Galaxy map**: marks systems (also as a numbered warp route), adds markers you keep.
 - **Micro jump**: short jumps of the ship you fly, paid with Pentaxid from a container marked `VJ`.
-- **Reacts** to events: arriving somewhere, low oxygen or food, shield down, fuel low.
+- **Reacts** to events: arriving somewhere, low oxygen or food, shield down, fuel low, new or completed missions
+  (which ones it speaks about is set in the module's settings).
 
 It can't fly, fight or build for you, and it only knows what you could see in the game yourself (no peeking into
 unexplored systems).
+
+### Where it gives you more than the game
+
+A few things are easier with the character than by hand. Turn them off in `VoxtaBridge.cfg` if your server should
+play strictly by the game's rules:
+
+- **Item transfers reach 1 km** (`TransferRangeMeters`): your own ships and bases within that distance are reachable,
+  more than the game's matter transmitters (75–150 m).
+- **Crafting is instant** (`TransfersEnabled`, `RequireConstructor`): it takes the game's recipes and materials but no
+  build time, and by default needs no constructor on the ship.
+- **Micro jumps** work without the drive's dialogue (`MicroJumpEnabled` and the other `MicroJump…` keys).
+- **POIs within 2 km** are known to the character even if you haven't scanned them with a detector.
+
+## Trust model: for private servers with friends
+
+VoxtaBridge is meant for **private, friends-only servers** where everyone trusts each other.
+
+- There is **one token** for the whole server. Everyone with it can use the bridge.
+- A player is picked by **SteamID** only. Whoever has the token can ask about, or act for, any player on the server
+  (move items, craft, jump).
+- The **debug endpoints** (e.g. giving items, teleporting for tests) are reachable with the same token.
+- The connection is **plain HTTP**: open the port only to the Voxta host, or use a VPN.
+
+Don't run it on a public server, and don't share the token with people you wouldn't give admin rights to.
 
 ## Requirements
 
@@ -71,6 +100,7 @@ The module's **Test** button checks the connection and shows who is online.
 | `TransferRangeMeters` | `1000` | own structures this close are reachable (0 = docked only) |
 | `PlayerVolumeLimit` | `1000` | litres; giving to the player stops there (0 = no limit) |
 | `RequireConstructor` | `false` | crafting needs a matching constructor on the ship |
+| `QuestLog` | `false` | records changes of the players' quest state (dialogue variables, PDA chapters, tokens) with their location to `VoxtaBridge.questlog.txt` next to the DLL, for working out new quest types; the file contains player names |
 | `MicroJumpEnabled` | `true` | allow micro jumps |
 | `MicroJumpMinMeters` / `MicroJumpMaxMeters` | `1000` / `25000` | jump length |
 | `MicroJumpKmPerPentaxid` | `5` | cost: 1 Refined Pentaxid per this many km, at least 1 |

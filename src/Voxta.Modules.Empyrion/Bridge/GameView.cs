@@ -16,6 +16,30 @@ public sealed class GameView
     private readonly JsonElement? _snapshot;
 
     public string PlayerName { get; }
+    public string? SteamId { get; private init; }
+
+    /// <summary>A mission's "needs" array.</summary>
+    public static List<MissionNeed> Needs(JsonElement m) =>
+        Array(m, "needs").Select(n => new MissionNeed(Str(n, "item") ?? "", Str(n, "name") ?? Str(n, "item") ?? "", (int)(Long(n, "count") ?? 0),
+            Long(n, "tokenId") is { } t ? (int)t : null)).Where(n => n.Item.Length > 0).ToList();
+
+    /// <summary>How many of a mission's item the player carries (bag + toolbar; tokens by token id).</summary>
+    private int Carried(MissionNeed need)
+    {
+        if (_api1Player is not { } a) return 0;
+        return Array(a, "toolbar").Concat(Array(a, "bag"))
+            .Where(i => need.TokenId is { } tid ? Long(i, "tokenId") == tid : string.Equals(Str(i, "name"), need.Item, StringComparison.OrdinalIgnoreCase))
+            .Sum(i => (int)(Long(i, "count") ?? 0));
+    }
+
+    /// <summary>The bridge's fresh on-foot location (dedi position + structure boxes), or null.</summary>
+    private JsonElement? Live =>
+        SteamId != null && _root.TryGetProperty("live", out var all) && all.ValueKind == JsonValueKind.Object &&
+        all.TryGetProperty(SteamId, out var l) && l.ValueKind == JsonValueKind.Object ? l : null;
+
+    private JsonElement? Pursuing =>
+        SteamId != null && _root.TryGetProperty("pursuing", out var all) && all.ValueKind == JsonValueKind.Object &&
+        all.TryGetProperty(SteamId, out var p) && p.ValueKind == JsonValueKind.Object ? p : null;
     public string Playfield { get; }
 
     private GameView(JsonElement root, string name, string playfield, JsonElement? api1, JsonElement? pfPlayer, JsonElement? snapshot)
@@ -74,7 +98,7 @@ public sealed class GameView
                 if (Long(p, "id") == entityId) { pfPlayer = p; snapshot = snap; }
         }
 
-        return new GameView(root, name, playfield, api1, pfPlayer, snapshot);
+        return new GameView(root, name, playfield, api1, pfPlayer, snapshot) { SteamId = Str(player, "steamId") };
     }
 
     private JsonElement? Structure =>
@@ -142,8 +166,8 @@ public sealed class GameView
                 sb.AppendLine(Visiting() is { } v ? $"On foot inside '{v}' (not the player's)." : "On foot (not in a ship or base).");
             else sb.AppendLine(Bool(pf, "isPilot") == true
                 ? $"Piloting the {Str(s, "type")} '{Str(s, "name")}'."
-                : Str(pf, "aboard") == "standing"
-                    ? $"Standing on board the {Str(s, "type")} '{Str(s, "name")}' (walking around, not seated)."
+                : ActiveField(null, "how") == "standing"
+                    ? $"On foot at the {Str(s, "type")} '{Str(s, "name")}': outside, on its hull or next to it (not inside)."
                     : $"Inside the {Str(s, "type")} '{Str(s, "name")}', not piloting.");
         }
         return sb.ToString().TrimEnd();
@@ -185,6 +209,74 @@ public sealed class GameView
             var pct = Double(t, "capacity") is { } cap and > 0 && Double(t, "content") is { } c ? $"{Math.Clamp(c / cap * 100, 0, 100):0}% (" : "";
             sb.AppendLine($"{char.ToUpperInvariant(tank[0])}{tank[1..]} tank: {pct}{Math.Round(Double(t, "content") ?? 0):0} / {Math.Round(Double(t, "capacity") ?? 0):0}{(pct.Length > 0 ? ")" : "")}.");
         }
+    }
+
+    /// <summary>Answer of POST /poi-terminal: the terminal's pages, with their options, as the game shows them.</summary>
+    public static string PoiTerminalResult(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True))
+            return Str(r, "error") ?? "Unknown error.";
+        var sb = new StringBuilder($"Info terminal '{Str(r, "terminal") ?? "terminal"}' at {Str(r, "poi")} ({Str(r, "playfield")}). " +
+                                   "What its screens say (the player can click through them in the game):");
+        var n = 0;
+        foreach (var p in Array(r, "pages"))
+        {
+            n++;
+            sb.Append($"\n\n[screen {n}]\n{Str(p, "text")}");
+            var opts = Array(p, "options").Select(o => o.GetString()).Where(o => !string.IsNullOrEmpty(o)).ToList();
+            if (opts.Count > 0) sb.Append($"\n(options: {string.Join(" | ", opts)})");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Answer of POST /quests.</summary>
+    public static string QuestsResult(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True))
+            return Str(r, "error") ?? "Unknown error.";
+        var quests = Array(r, "quests").ToList();
+        var filter = new List<string>();
+        if (Str(r, "near") is { } near) filter.Add(double.TryParse(near, NumberStyles.Float, CultureInfo.InvariantCulture, out _) ? $"within {near} LY" : $"in this {near}");
+        if (Str(r, "item") is { } item) filter.Add($"wanting '{item}'");
+        var which = Str(r, "status") switch { "unlocked" => "unlocked factories", "all" => "trader missions", _ => "open trader missions" };
+        if (quests.Count == 0)
+            return Long(r, "tracked") is 0 or null
+                ? "No trader missions yet: they start when the player talks to a factory's trader (the chief), who explains what they need."
+                : $"No {which}{(filter.Count > 0 ? " " + string.Join(", ", filter) : "")}. ({Num(r, "tracked")} traders talked to in total.)";
+        var sb = new StringBuilder($"{char.ToUpperInvariant(which[0])}{which[1..]}{(filter.Count > 0 ? " " + string.Join(", ", filter) : "")}, closest first:");
+        foreach (var q in quests)
+        {
+            var dist = Double(q, "ly") is { } ly ? (ly < 0.05 ? "this sector" : $"{ly.ToString("0.#", CultureInfo.InvariantCulture)} LY") : "distance unknown";
+            var head = $"\n- {Str(q, "factory")} ({Str(q, "playfield")}, {dist}{(Str(q, "faction") is { } f ? $", {f}" : "")})";
+            if (Bool(q, "pursued") == true) head += " [pursued]";
+            sb.Append(head);
+            if (Str(q, "wants") is { } wants)
+            {
+                sb.Append($": wants {wants}");
+                sb.Append(Bool(q, "followUp") == true ? " (optional follow-up; trades already)" : Bool(q, "tradesUnlocked") == false ? " to unlock its trades" : "");
+                if (Str(q, "reward") is { } reward) sb.Append($". Reward: {reward}");
+                if (Str(q, "workOrder") is { } wo) sb.Append($". Or a work order: {wo}");
+                sb.Append('.');
+            }
+            else sb.Append(Str(q, "status") switch
+            {
+                "locked" => ": trades locked; talking to the trader gives the mission.",
+                "unlocked" => Bool(q, "moreMissions") == true ? ": trades unlocked; more missions on offer (\"Offer assistance\")." : ": trades unlocked.",
+                _ => ": no mission running.",
+            });
+        }
+        if (Long(r, "more") is > 0) sb.Append($"\n(and {Num(r, "more")} more; filter by near or item)");
+        return sb.ToString();
+    }
+
+    /// <summary>Answer of POST /quest-pursue.</summary>
+    public static string PursueQuestResult(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True))
+            return Str(r, "error") ?? "Unknown error.";
+        return Str(r, "line") is { } line
+            ? $"Now pursuing: {line}. It stays in the live game state until it's done or cleared."
+            : "No mission pursued any more.";
     }
 
     /// <summary>Answer of POST /active (set or auto).</summary>
@@ -358,7 +450,8 @@ public sealed class GameView
                 var places = Array(g, "tradingPlaces").Select(t =>
                     $"{Str(t, "name")} ({Long(t, "traders")} trader{(Long(t, "traders") == 1 ? "" : "s")}, {Distance(Double(t, "distance") ?? 0)})").ToList();
                 if (places.Count > 0) parts.Add("trading places: " + string.Join("; ", places));
-                if (Str(g, "terminal") != null) parts.Add("info terminal at the entrance");
+                if (Str(g, "terminal") is { } term)
+                    parts.Add(Str(g, "terminalPoi") is { } tp && tp != Str(g, "name") ? $"info terminal '{term}' at {tp}" : $"info terminal '{term}'");
                 if (Bool(g, "onlyInRange") == true) parts.Add("not discovered yet, only seen");
                 parts.Add(Distance(Double(g, "distance") ?? 0));
                 sb.Append($"\n- {Str(g, "name")}: {string.Join(", ", parts)}");
@@ -394,7 +487,8 @@ public sealed class GameView
                    (total > systems.Count ? $"; and {total - systems.Count} more." : ".");
         }
         var bodies = Array(r, "bodies").ToList();
-        string Line(JsonElement b) => $"{Str(b, "name")} ({Str(b, "type")}){(Bool(b, "here") == true ? " - the player is here" : Bool(b, "entered") == true ? ", visited" : "")}";
+        string Line(JsonElement b) =>
+            $"{Str(b, "name")} ({Str(b, "type")}{(Str(b, "difficulty") is { } d ? $", {d}" : "")}){(Bool(b, "here") == true ? " - the player is here" : Bool(b, "entered") == true ? ", visited" : "")}";
         var away = Double(r, "ly") is { } ly && ly >= 0.05 ? $", {Num(r, "ly")} LY away" : "";
         var via = Bool(r, "byPlayer") == false ? ", known through the faction" : "";
         var sb = new System.Text.StringBuilder($"System {Str(r, "system")}, star class {Str(r, "starClass")}{away}{via}.");
@@ -402,6 +496,25 @@ public sealed class GameView
         {
             var list = bodies.Where(b => Str(b, "kind") == kind).Select(Line).ToList();
             if (list.Count > 0) sb.Append($"\n{label}: {string.Join(", ", list)}.");
+        }
+        if (r.TryGetProperty("details", out var det) && det.ValueKind == JsonValueKind.Object)
+        {
+            sb.Append($"\n\n{Str(det, "name")} ({Str(det, "type")} {Str(det, "kind")}");
+            if (Str(det, "difficulty") is { } diff) sb.Append($", difficulty {diff}");
+            sb.Append("):");
+            if (Str(det, "description") is { Length: > 0 } desc) sb.Append($"\n{desc}");
+            foreach (var e in Array(det, "effects").Select(x => x.GetString())) sb.Append($"\n{e}");
+            var facts = new List<string>();
+            if (Double(det, "gravityG") is { } g) facts.Add($"gravity {g:0.##} g");
+            if (Double(det, "atmosphere") is { } a) facts.Add(a < 0.05 ? "no atmosphere" : $"atmosphere {a:0.##}");
+            if (Double(det, "oxygenPercent") is { } o) facts.Add($"oxygen {o:0} %");
+            if (Bool(det, "breathable") is { } br) facts.Add(br ? "breathable" : "not breathable");
+            if (Double(det, "tempMin") is { } tmin && Double(det, "tempMax") is { } tmax) facts.Add($"temperature {tmin:0} to {tmax:0} °C");
+            if (Double(det, "tempNight") is { } tn) facts.Add($"night {tn:0} °C");
+            if (Double(det, "radiation") is { } rad) facts.Add($"radiation {rad:0.#}");
+            if (facts.Count > 0) sb.Append($"\n{string.Join(", ", facts)}.");
+            var res = Array(det, "resources").Select(x => x.GetString()).ToList();
+            if (res.Count > 0) sb.Append($"\nResources: {string.Join(", ", res)}.");
         }
         return sb.ToString();
     }
@@ -539,7 +652,8 @@ public sealed class GameView
                     var dist = Double(k, "ly") is { } ly ? (ly < 0.05 ? "in this sector" : $"{ly.ToString("0.#", CultureInfo.InvariantCulture)} LY away") : "distance unknown";
                     var fac = Str(k, "faction") is { } f ? $", {f}{(Str(k, "tier") is { } t ? $" ({t})" : "")}" : "";
                     var via = Str(k, "via") == "traded" ? ", traded there before" : ", visited";
-                    sb.AppendLine($"  - {Str(k, "trader")} at {Str(k, "poi")} in {Str(k, "playfield")}: {dist}{fac}{via}");
+                    var locked = Str(k, "tradesLocked") is { } lk ? $"; trades locked for the player, {lk}" : Bool(k, "tradesUnlocked") == true ? "; trades unlocked" : "";
+                    sb.AppendLine($"  - {Str(k, "trader")} at {Str(k, "poi")} in {Str(k, "playfield")}: {dist}{fac}{via}{locked}");
                 }
                 if (Long(it, "moreKnown") is > 0) sb.AppendLine($"  - and {Num(it, "moreKnown")} more known");
             }
@@ -554,7 +668,8 @@ public sealed class GameView
                         var where = string.Join(", ", Array(p, "where").Select(x => x.GetString()));
                         if (Long(p, "moreWhere") is > 0) where += $" and {Num(p, "moreWhere")} more";
                         var fac = Str(p, "faction") is { } f ? $" ({f}{(Str(p, "tier") is { } t ? $", {t}" : "")})" : "";
-                        return $"{Str(p, "name")}{fac} on/in: {where}";
+                        var gate = Bool(p, "tradeMission") == true ? " [trades only after a mission for its trader]" : "";
+                        return $"{Str(p, "name")}{fac}{gate} on/in: {where}";
                     });
                     var more = Long(s, "morePois") is > 0 ? $"; {Num(s, "morePois")} more POI types" : "";
                     var buys = Bool(s, "alsoBuys") == true ? ", also buys it" : "";
@@ -868,6 +983,37 @@ public sealed class GameView
         JsonElement? Tank(string name) =>
             s is { } st && st.TryGetProperty(name, out var t) && t.ValueKind == JsonValueKind.Object ? t : null;
 
+        // Where the player is. Seats and "inside an own ship" come from the playfield server (instant there); on foot,
+        // its position lags up to a minute, so the bridge's "live" answer (fresh dedi position + structure boxes) wins.
+        var how = ActiveField(null, "how");
+        var seated = (PlayerOnActive && s != null && how != "standing") || ActiveField("on", "name") != null;
+        string? shipName = PlayerOnActive ? (s is { } s1 ? Str(s1, "name") : null) : ActiveField("on", "name");
+        string? shipType = PlayerOnActive ? (s is { } s2 ? Str(s2, "type") : null) : ActiveField("on", "type");
+        var standing = PlayerOnActive && s != null && how == "standing";
+        JsonElement? visiting = _pfPlayer is { } vp && vp.TryGetProperty("visiting", out var vis) && vis.ValueKind == JsonValueKind.Object ? vis : null;
+        string? activeName = !PlayerOnActive && s is { } s5 ? Str(s5, "name") : null;
+        string? activeType = !PlayerOnActive && s is { } s6 ? Str(s6, "type") : null;
+        string? activeHow = !PlayerOnActive && s != null ? how : null;
+        double? activeDistance = !PlayerOnActive && s != null && Active is { } ad ? Double(ad, "distance") : null;
+        if (!seated && Live is { } live)
+        {
+            visiting = live.TryGetProperty("visiting", out var lv) && lv.ValueKind == JsonValueKind.Object ? lv : null;
+            var at = live.TryGetProperty("standing", out var ls) && ls.ValueKind == JsonValueKind.Object ? ls : (JsonElement?)null;
+            standing = at != null;
+            shipName = at is { } a1 ? Str(a1, "name") : null;
+            shipType = at is { } a2 ? Str(a2, "type") : null;
+            // the active structure: the playfield server's choice, shown unless the player is at it
+            if (s is { } act && Str(act, "name") is { } actName && actName != shipName)
+            {
+                activeName = actName;
+                activeType = Str(act, "type");
+                activeHow = how == "standing" ? "nearest" : how;
+                activeDistance = Array(live, "own").Where(o => Str(o, "name") == actName).Select(o => Double(o, "distance")).FirstOrDefault()
+                                 ?? (Active is { } ad2 ? Double(ad2, "distance") : null);
+            }
+            else { activeName = null; activeType = null; activeHow = null; activeDistance = null; }
+        }
+
         return new GameState
         {
             Player = PlayerName,
@@ -880,12 +1026,13 @@ public sealed class GameView
             Food = Get(a, "food"), FoodMax = Get(a, "foodMax"),
             Radiation = Get(a, "radiation"), RadiationMax = Get(a, "radiationMax"),
             // physically aboard: the active structure when the player is on it, else the own structure they stand on
-            ShipName = PlayerOnActive ? (s is { } s1 ? Str(s1, "name") : null) : ActiveField("on", "name"),
-            ShipType = PlayerOnActive ? (s is { } s2 ? Str(s2, "type") : null) : ActiveField("on", "type"),
-            ActiveName = !PlayerOnActive && s is { } s5 ? Str(s5, "name") : null,
-            ActiveType = !PlayerOnActive && s is { } s6 ? Str(s6, "type") : null,
-            ActiveHow = !PlayerOnActive && s != null ? ActiveField(null, "how") : null,
-            ActiveDistance = !PlayerOnActive && s != null && Active is { } ad ? Double(ad, "distance") : null,
+            ShipName = shipName,
+            ShipType = shipType,
+            Standing = standing,
+            ActiveName = activeName,
+            ActiveType = activeType,
+            ActiveHow = activeHow,
+            ActiveDistance = activeDistance,
             ActiveNote = ActiveField(null, "note"),
             IsPilot = _pfPlayer is { } pf && Bool(pf, "isPilot") == true,
             ShipFuel = Get(Tank("fuel"), "content"), ShipFuelMax = Get(Tank("fuel"), "capacity"),
@@ -893,9 +1040,17 @@ public sealed class GameView
             ShipPentaxid = Get(Tank("pentaxid"), "content"), ShipPentaxidMax = Get(Tank("pentaxid"), "capacity"),
             ShieldActive = s is { } s3 ? Bool(s3, "shieldActive") : null,
             Powered = s is { } s4 ? Bool(s4, "powered") : null,
-            VisitingName = _pfPlayer is { } v1 && v1.TryGetProperty("visiting", out var vis) && vis.ValueKind == JsonValueKind.Object ? Str(vis, "name") : null,
-            VisitingType = _pfPlayer is { } v2 && v2.TryGetProperty("visiting", out var vis2) && vis2.ValueKind == JsonValueKind.Object ? Str(vis2, "type") : null,
-            VisitingOwner = _pfPlayer is { } v3 && v3.TryGetProperty("visiting", out var vis3) && vis3.ValueKind == JsonValueKind.Object ? Str(vis3, "owner") : null,
+            VisitingName = visiting is { } v1 ? Str(v1, "name") : null,
+            VisitingType = visiting is { } v2 ? Str(v2, "type") : null,
+            VisitingOwner = visiting is { } v3 ? Str(v3, "owner") : null,
+            PursuingLine = Pursuing is { } pq ? Str(pq, "line") : null,
+            PursuingStatus = Pursuing is { } pq2 ? Str(pq2, "status") : null,
+            OpenMissions = SteamId != null && _root.TryGetProperty("missions", out var ms) && ms.ValueKind == JsonValueKind.Object &&
+                           ms.TryGetProperty(SteamId, out var mine) && mine.ValueKind == JsonValueKind.Array
+                ? mine.EnumerateArray().Select(m => new OpenMission(Str(m, "key") ?? "", Str(m, "kind") ?? "trader", Str(m, "line") ?? "",
+                    Str(m, "where"), Bool(m, "followUp") == true, Bool(m, "pursued") == true, Needs(m))).ToList()
+                : null,
+            PursuingProgress = Pursuing is { } pq3 && Needs(pq3) is { Count: > 0 } pn ? pn.Select(n => (n, Carried(n))).ToList() : null,
             FactoryBlueprint = a is { } f1 && f1.TryGetProperty("factory", out var fac) ? Str(fac, "blueprint") : null,
             FactoryRemainingS = a is { } f2 && f2.TryGetProperty("factory", out var fac2) ? Get(fac2, "remainingS") : null,
         };

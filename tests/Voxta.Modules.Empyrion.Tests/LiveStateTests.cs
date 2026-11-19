@@ -102,7 +102,52 @@ public class LiveStateTests
         var e = Assert.Single(GameEvents.Diff(Base, next));
         Assert.Equal("PlayfieldChanged", e.Name);
         Assert.True(e.Important);
-        Assert.Contains("Arrived at Akua Moon (Moon), coming from Akua", e.Description);
+        Assert.Contains("Warped aboard the", e.Description);
+        Assert.Contains("to Akua Moon (Moon), coming from Akua", e.Description);
+    }
+
+    [Fact]
+    public void Playfield_change_on_foot_is_an_arrival()
+    {
+        var onFoot = Base with { ShipName = null, ShipType = null, IsPilot = false };
+        var e = Assert.Single(GameEvents.Diff(onFoot, onFoot with { Playfield = "Akua Moon" }));
+        Assert.StartsWith("Arrived at Akua Moon", e.Description);
+    }
+
+    [Fact]
+    public void Warp_gap_without_a_ship_is_not_leaving_it()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        var gap = Base with { ShipName = null, ShipType = null, IsPilot = false, Playfield = "Akua Moon" };
+        var prev = w.Apply(Base, t);
+        var during = w.Apply(gap, t.AddSeconds(5));
+        var after = w.Apply(Base with { Playfield = "Akua Moon" }, t.AddSeconds(12));
+
+        var events = GameEvents.Diff(prev, during).Concat(GameEvents.Diff(during, after)).ToList();
+        Assert.Equal("PlayfieldChanged", Assert.Single(events).Name);
+        Assert.Contains("Warped aboard", events[0].Description);
+    }
+
+    [Fact]
+    public void Leaving_the_ship_on_the_same_playfield_shows_at_once()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        var onFoot = Base with { ShipName = null, ShipType = null, IsPilot = false };
+        w.Apply(Base, t);
+        Assert.False(w.Apply(onFoot, t.AddSeconds(2))!.InShip);
+    }
+
+    [Fact]
+    public void Arriving_without_the_ship_is_an_exit_after_the_hold()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        var gap = Base with { ShipName = null, ShipType = null, IsPilot = false, Playfield = "Akua Moon" };
+        w.Apply(Base, t);
+        Assert.True(w.Apply(gap, t.AddSeconds(2))!.InShip);
+        Assert.False(w.Apply(gap, t.AddSeconds(2) + WarpSmoother.HoldFor + TimeSpan.FromSeconds(1))!.InShip);
     }
 
     [Fact]
@@ -181,10 +226,77 @@ public class LiveStateTests
         Assert.Equal("ShieldDown", Assert.Single(GameEvents.Diff(up, Base)).Name);
     }
 
+    /// <summary>The fixture with the player on foot per the (stale) playfield snapshot plus a "live" answer.</summary>
+    private static GameView Live(string active, string live) =>
+        View(Status.Replace("\"isPilot\": true,", $"\"isPilot\": false, \"active\": {active},")
+                   .Replace("\"playfields\": [", $"\"live\": {{ \"765\": {live} }}, \"playfields\": ["));
+
     [Fact]
-    public void Status_says_standing_on_board()
+    public void Live_position_wins_over_a_stale_snapshot_on_foot()
     {
-        var json = Status.Replace("\"isPilot\": true,", "\"isPilot\": false, \"aboard\": \"standing\",");
-        Assert.Contains("Standing on board the SV 'Test Corvette'", View(json).PlayerStatus());
+        // snapshot still says standing at the ship; the fresh position is inside a POI 80 m away
+        var view = Live("""{ "how": "standing", "playerOn": true, "distance": 0 }""",
+            """{ "pos": [1, 2, 3], "visiting": { "name": "Solaris-AMP Factory", "type": "BA", "owner": "Polaris" }, "own": [ { "name": "Test Corvette", "type": "SV", "distance": 80 } ] }""");
+        var st = view.State();
+        Assert.False(st.InShip);
+        Assert.False(st.Standing);
+        Assert.Equal("Solaris-AMP Factory", st.VisitingName);
+        Assert.Equal(("Test Corvette", "nearest", 80.0), (st.ActiveName, st.ActiveHow, st.ActiveDistance));
+        Assert.Contains("inside the base 'Solaris-AMP Factory'", st.ToContext());
+    }
+
+    [Fact]
+    public void Live_standing_at_the_ship_before_the_snapshot_notices()
+    {
+        var view = Live("""{ "how": "nearest", "playerOn": false, "distance": 80 }""",
+            """{ "pos": [1, 2, 3], "standing": { "name": "Test Corvette", "type": "SV" }, "own": [ { "name": "Test Corvette", "type": "SV", "distance": 4 } ] }""");
+        var st = view.State();
+        Assert.True(st.Standing);
+        Assert.Equal("Test Corvette", st.ShipName);
+        Assert.Null(st.ActiveName);
+        Assert.Contains("On foot at the SV 'Test Corvette'", st.ToContext());
+    }
+
+    [Fact]
+    public void Seated_stays_with_the_playfield_server()
+    {
+        var json = Status.Replace("\"playfields\": [", "\"live\": { \"765\": { \"pos\": [1,2,3], \"visiting\": { \"name\": \"Somewhere\", \"type\": \"BA\" }, \"own\": [] } }, \"playfields\": [");
+        var st = View(json).State();
+        Assert.True(st.InShip);
+        Assert.Null(st.VisitingName);
+    }
+
+    [Fact]
+    public void Status_says_standing_outside_the_ship()
+    {
+        var json = Status.Replace("\"isPilot\": true,", "\"isPilot\": false, \"active\": { \"how\": \"standing\", \"playerOn\": true },");
+        var view = View(json);
+        Assert.Contains("On foot at the SV 'Test Corvette': outside", view.PlayerStatus());
+        Assert.True(view.State().Standing);
+        Assert.False(view.State().InShip);
+    }
+}
+
+public class StandingTests
+{
+    static readonly GameState Inside = new() { Player = "Player1", Playfield = "Viunean", ShipName = "Test Hauler", ShipType = "CV" };
+
+    [Fact]
+    public void Standing_next_to_the_ship_is_not_aboard()
+    {
+        var outside = Inside with { Standing = true };
+        Assert.False(outside.InShip);
+        Assert.Contains("On foot at the CV 'Test Hauler' (outside", outside.ToContext());
+        Assert.DoesNotContain("Aboard", outside.ToContext());
+    }
+
+    [Fact]
+    public void Walking_up_to_the_ship_and_in_gives_one_boarding()
+    {
+        var onFoot = Inside with { ShipName = null, ShipType = null };
+        var outside = Inside with { Standing = true };
+        Assert.Empty(GameEvents.Diff(onFoot, outside));
+        Assert.Equal("BoardedShip", Assert.Single(GameEvents.Diff(outside, Inside)).Name);
+        Assert.Equal("LeftShip", Assert.Single(GameEvents.Diff(Inside, outside)).Name);
     }
 }

@@ -37,6 +37,11 @@ namespace VoxtaBridge
         public bool MicroJumpRequireDrive = true;
         /// <summary>Jump distance per Refined Pentaxid in km; the cost is rounded up to whole Pentaxid (minimum 1).</summary>
         public double MicroJumpKmPerPentaxid = JumpRules.DefaultKmPerPentaxid;
+        /// <summary>
+        /// Quest recorder: log every change of the online players' dialogue variables, PDA chapters, dialogue steps and
+        /// tokens (with where the player was) to VoxtaBridge.questlog.txt, to learn how quests and contracts are stored.
+        /// </summary>
+        public bool QuestLog = false;
         public string Path;
 
         /// <param name="create">false on playfield servers: read only, never write a token (the dedi owns the file).</param>
@@ -69,6 +74,7 @@ namespace VoxtaBridge
             if (values.TryGetValue("PlayerVolumeLimit", out var pv) && double.TryParse(pv, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var pvd) && pvd >= 0) cfg.PlayerVolumeLimit = pvd;
             if (values.TryGetValue("RequireConstructor", out var rc) && bool.TryParse(rc, out var rcb)) cfg.RequireConstructor = rcb;
+            if (values.TryGetValue("QuestLog", out var ql) && bool.TryParse(ql, out var qlb)) cfg.QuestLog = qlb;
             double D(string k, double d) => values.TryGetValue(k, out var v) && double.TryParse(v, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var x) && x >= 0 ? x : d;
             if (values.TryGetValue("MicroJumpEnabled", out var mje) && bool.TryParse(mje, out var mjeb)) cfg.MicroJumpEnabled = mjeb;
@@ -93,6 +99,7 @@ namespace VoxtaBridge
                         $"TransferRangeMeters={cfg.TransferRangeMeters.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +
                         $"PlayerVolumeLimit={cfg.PlayerVolumeLimit.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +
                         $"RequireConstructor={cfg.RequireConstructor}\n" +
+                        $"QuestLog={cfg.QuestLog}\n" +
                         $"MicroJumpEnabled={cfg.MicroJumpEnabled}\nMicroJumpMinMeters={cfg.MicroJumpMinMeters}\nMicroJumpMaxMeters={cfg.MicroJumpMaxMeters}\n" +
                         $"MicroJumpCooldownSeconds={cfg.MicroJumpCooldownSeconds}\nMicroJumpRequireDrive={cfg.MicroJumpRequireDrive}\nMicroJumpHitLockSeconds={cfg.MicroJumpHitLockSeconds}\n" +
                         $"MicroJumpBodyClearanceMeters={cfg.MicroJumpBodyClearanceMeters.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +

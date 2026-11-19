@@ -22,6 +22,10 @@
         <Compile Include="..\..\src\VoxtaBridge.Mod\StarMarks.cs" Link="StarMarks.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\PoiClass.cs" Link="PoiClass.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\PoiScan.cs" Link="PoiScan.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\PoiTerminals.cs" Link="PoiTerminals.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\PlanetInfo.cs" Link="PlanetInfo.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\TradeMissions.cs" Link="TradeMissions.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\LiveBoxes.cs" Link="LiveBoxes.cs" />
     </ItemGroup>
 
     <ItemGroup>

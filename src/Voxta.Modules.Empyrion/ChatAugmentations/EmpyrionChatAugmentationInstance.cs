@@ -14,7 +14,8 @@ namespace Voxta.Modules.Empyrion.ChatAugmentations;
 /// <param name="ReactionCooldown">Minimum time between two spoken reactions.</param>
 /// <param name="VcSuffix">Name suffix of the crafting container.</param>
 /// <param name="VjSuffix">Name suffix of the container that pays for micro jumps.</param>
-public sealed record LiveSettings(bool LiveContext, bool Reactions, TimeSpan PollInterval, TimeSpan ReactionCooldown, string VcSuffix = "VC", string VjSuffix = "VJ");
+public sealed record LiveSettings(bool LiveContext, bool Reactions, TimeSpan PollInterval, TimeSpan ReactionCooldown, string VcSuffix = "VC", string VjSuffix = "VJ",
+    MissionAnnounce? Missions = null);
 
 public sealed class EmpyrionChatAugmentationInstance(
     IChatSessionChatAugmentationApi session,
@@ -46,6 +47,8 @@ public sealed class EmpyrionChatAugmentationInstance(
     private const string StarArg = "star";
     private const string NameArg = "name";
     private const string HudArg = "hud";
+    private const string StatusArg = "status";
+    private const string NearArg = "near";
 
     private readonly CancellationTokenSource _stop = new();
     private Task? _poller;
@@ -163,12 +166,59 @@ public sealed class EmpyrionChatAugmentationInstance(
             ReadTool(EmpyrionConstants.SystemInfoTool,
                 "The star class and the planets, moons and gas giants of a solar system with their types (e.g. Stormy Desert, " +
                 "Lava Moon), as the galaxy map shows them: the current system, or any system the player or their faction has " +
-                "discovered. 'known' lists all discovered systems. Undiscovered systems only show star class and territory.",
+                "discovered, with each body's difficulty. With a planet or moon name: its description as the game shows it (lore, " +
+                "special effects such as reduced detection), gravity, atmosphere, oxygen, temperatures, radiation and resources. " +
+                "'known' lists all discovered systems. Undiscovered systems only show star class and territory.",
                 [
                     new FunctionArgumentDefinition
                     {
                         Name = SystemArg, Type = FunctionArgumentType.String, Required = false,
-                        Description = "System or planet name (default: the current system), or 'known' for the list of discovered systems.",
+                        Description = "System name, or a planet/moon name for its details (default: the current system), or 'known' for the list of discovered systems.",
+                    },
+                ]),
+            ReadTool(EmpyrionConstants.PoiTerminalTool,
+                "Read the info terminal of a POI (abandoned bunkers, reactors, launch controllers, research stations): its screens " +
+                "with lore, warnings, codes and hints, as the game shows them. Only for a POI the player is at (within 2 km) or " +
+                "has visited. Use it when the scan shows an info terminal or the player asks what a place is about; retell what " +
+                "matters, don't read everything out.",
+                [
+                    new FunctionArgumentDefinition
+                    {
+                        Name = PoiArg, Type = FunctionArgumentType.String, Required = true,
+                        Description = "POI name or part of it, e.g. 'Abandoned Bunker'.",
+                    },
+                ]),
+            ReadTool(EmpyrionConstants.ListQuestsTool,
+                "The player's trader missions: specialised factories (and some shops) that want items before they trade, or " +
+                "offer paid jobs. Read from the game's own save, so it covers every trader the player has talked to. The game " +
+                "doesn't track these missions anywhere the player can see, so this is where the character remembers them. " +
+                "Gives what each wants, the reward, the work-order alternative and the distance, closest first, at most 5.",
+                [
+                    new FunctionArgumentDefinition
+                    {
+                        Name = StatusArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "'open' (default: missions waiting, trades still locked), 'unlocked' (factories that trade now) or 'all'.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = NearArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "Only near the player: 'playfield', 'system', or a distance in light years, e.g. '20'.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = ItemArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "Only missions that want this item (name or part of it), e.g. 'Graphite'.",
+                    },
+                ]),
+            MarkTool(EmpyrionConstants.PursueQuestTool,
+                "Pursue one trader mission when the player asks to work on it: its line ('Pursuing: …') stays in the live game " +
+                "state until it is done or cleared, and the character hears when it's done. One at a time; a new one replaces the " +
+                "old. 'none' clears it.",
+                [
+                    new FunctionArgumentDefinition
+                    {
+                        Name = NameArg, Type = FunctionArgumentType.String, Required = true,
+                        Description = "Factory name (or part of it, or its playfield) as empyrion_list_quests gives it, or 'none'.",
                     },
                 ]),
             ReadTool(EmpyrionConstants.PoiTradeTool,
@@ -478,6 +528,29 @@ public sealed class EmpyrionChatAugmentationInstance(
         }
         if (name == EmpyrionConstants.SystemInfoTool)
             return await BridgeCallAsync(() => client.SystemInfoAsync(GetString(arguments, SystemArg), steamId, cancellationToken), GameView.SystemInfoResult);
+        if (name == EmpyrionConstants.PoiTerminalTool)
+        {
+            if (GetString(arguments, PoiArg) is not { Length: > 0 } terminalPoi)
+                return new ChatToolCallResult($"'{PoiArg}' is required.", IsError: true);
+            return await BridgeCallAsync(() => client.PoiTerminalAsync(terminalPoi.Trim(), steamId, cancellationToken), GameView.PoiTerminalResult);
+        }
+        if (name == EmpyrionConstants.ListQuestsTool)
+            return await BridgeCallAsync(() => client.QuestsAsync(GetString(arguments, StatusArg), GetString(arguments, NearArg), GetString(arguments, ItemArg), steamId, cancellationToken), GameView.QuestsResult);
+        if (name == EmpyrionConstants.PursueQuestTool)
+        {
+            var quest = GetString(arguments, NameArg) is { Length: > 0 } qn ? qn.Trim() : "none";
+            try
+            {
+                using var doc = await client.PursueQuestAsync(quest, steamId, cancellationToken);
+                var root = doc.RootElement;
+                var ok = root.TryGetProperty("ok", out var o) && o.ValueKind == JsonValueKind.True;
+                var text = GameView.PursueQuestResult(root);
+                if (ok && root.TryGetProperty("quest", out var q) && GameView.Needs(q) is { Count: > 0 } needs)
+                    text += " " + await ReachTextAsync(needs, cancellationToken);
+                return new ChatToolCallResult(text, IsError: !ok);
+            }
+            catch (BridgeException exc) { return new ChatToolCallResult(exc.Message, IsError: true); }
+        }
         if (name == EmpyrionConstants.PoiTradeTool)
         {
             if (GetString(arguments, PoiArg) is not { Length: > 0 } poi)
@@ -802,6 +875,7 @@ public sealed class EmpyrionChatAugmentationInstance(
         string? lastContext = null;
         var lastSpoken = DateTimeOffset.MinValue;
         string? nearby = null, nearbyPlayfield = null;
+        var warpSmoother = new WarpSmoother();
         var nearbyAt = DateTimeOffset.MinValue;
 
         while (!ct.IsCancellationRequested)
@@ -813,7 +887,7 @@ public sealed class EmpyrionChatAugmentationInstance(
                 using (var doc = await client.GetStatusAsync(ct))
                 {
                     var view = GameView.Create(doc.RootElement, steamId, out var error);
-                    state = view?.State();
+                    state = warpSmoother.Apply(view?.State(), DateTimeOffset.UtcNow);
                     context = state?.ToContext() ?? $"[ EMPYRION ] {error}";
                 }
 
@@ -845,12 +919,20 @@ public sealed class EmpyrionChatAugmentationInstance(
                 if (live.LiveContext && context != lastContext)
                 {
                     await session.SetContexts(EmpyrionConstants.AugmentationKey, [ContextDefinition.Single(context)], ct);
+                    // where the player is (location + aboard/on foot): logged when it changes, to compare with what the character says
+                    var where = WhereLines(context);
+                    if (where != WhereLines(lastContext)) logger.LogInformation("Empyrion context now: {Where}", where);
                     lastContext = context;
                 }
 
                 if (live.Reactions)
                 {
-                    var events = GameEvents.Diff(previous, state, firstPoll);
+                    var events = GameEvents.Diff(previous, state, firstPoll, live.Missions);
+                    // a new mission: say what of it is already in reach (only for the ones spoken about)
+                    for (var i = 0; i < events.Count; i++)
+                        if (events[i] is { MissionKey: { } key, Important: true } ev &&
+                            state?.OpenMissions?.FirstOrDefault(m => m.Key == key)?.Needs is { Count: > 0 } needs)
+                            events[i] = ev with { Description = ev.Description + " " + await ReachTextAsync(needs, ct) };
                     if (events.Count > 0) lastSpoken = await DeliverAsync(events, lastSpoken, ct);
                 }
 
@@ -910,6 +992,48 @@ public sealed class EmpyrionChatAugmentationInstance(
         await session.TriggerReplyAsync(ct);
         return now;
     }
+
+    /// <summary>
+    /// "Already in reach: Communication Equipment 8 of 12 (5 in Ores @ Zeus, 3 in the player's inventory)." from one
+    /// find per wanted item (same scope as empyrion_find_item: inventory, active structure group, own structures in range).
+    /// </summary>
+    private async Task<string> ReachTextAsync(IReadOnlyList<MissionNeed> needs, CancellationToken ct)
+    {
+        var parts = new List<string>();
+        foreach (var need in needs.Where(n => n.TokenId == null).Take(6))
+        {
+            try
+            {
+                using var doc = await client.FindAsync(need.Name, steamId, ct);
+                var item = doc.RootElement.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array
+                    ? items.EnumerateArray().FirstOrDefault(i => i.TryGetProperty("name", out var nm) && string.Equals(nm.GetString(), need.Name, StringComparison.OrdinalIgnoreCase))
+                    : default;
+                if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("total", out var tot) || tot.GetInt32() == 0)
+                {
+                    parts.Add($"{need.Name}: none");
+                    continue;
+                }
+                var where = item.TryGetProperty("locations", out var locs) && locs.ValueKind == JsonValueKind.Array
+                    ? string.Join(", ", locs.EnumerateArray().Take(3).Select(l =>
+                    {
+                        var w = l.GetProperty("where").GetString() ?? "";
+                        w = w.StartsWith("player ") ? "the player's inventory" : w;
+                        return $"{l.GetProperty("count").GetInt32()} in {w}";
+                    }))
+                    : "";
+                parts.Add($"{need.Name}: {Math.Min(tot.GetInt32(), need.Count)} of {need.Count}{(where.Length > 0 ? $" ({where})" : "")}");
+            }
+            catch (Exception exc) when (exc is BridgeException or JsonException or KeyNotFoundException or InvalidOperationException)
+            {
+                parts.Add($"{need.Name}: unknown");
+            }
+        }
+        return parts.Count == 0 ? "" : "Already in reach (inventory, ship and own structures nearby): " + string.Join("; ", parts) + ".";
+    }
+
+    private static string WhereLines(string? context) =>
+        context == null ? "" : string.Join(" | ", context.Split('\n').Select(l => l.Trim())
+            .Where(l => l.StartsWith("Location:") || l.StartsWith("On foot") || l.StartsWith("Aboard") || l.StartsWith("Piloting")));
 
     private static string? GetString(JsonElement? arguments, string name)
     {

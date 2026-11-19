@@ -34,6 +34,9 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         new(EmpyrionConstants.SetActiveStructureTool, "Set Active Ship/Base"),
         new(EmpyrionConstants.SystemInfoTool, "Planets In The Current System"),
         new(EmpyrionConstants.PoiTradeTool, "What A POI Sells And Buys"),
+        new(EmpyrionConstants.PoiTerminalTool, "Read A POI's Info Terminal"),
+        new(EmpyrionConstants.ListQuestsTool, "List Trader Missions"),
+        new(EmpyrionConstants.PursueQuestTool, "Pursue A Trader Mission"),
         new(EmpyrionConstants.MarkStarsTool, "Mark Stars On The Galaxy Map"),
         new(EmpyrionConstants.ClearMarksTool, "Clear Galaxy Map Marks"),
         new(EmpyrionConstants.AddMapMarkerTool, "Add Permanent Map Marker"),
@@ -87,6 +90,64 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         DefaultValue = true,
     };
 
+    /// <summary>Folded section (Advanced on the title folds all of it): grows with every tracked quest type.</summary>
+    public static readonly FormTitleField AnnouncementsTitle = Folded(FormTitleField.Create(
+        "Mission Announcements",
+        text: "Which trader missions the character speaks up about (needs 'React to Game Events'); the others are only passed on silently."));
+
+    private static FormTitleField Folded(FormTitleField title) { title.Advanced = true; return title; }
+
+    public static readonly FormBooleanField AnnounceFactoryMissions = new()
+    {
+        Name = "AnnounceFactoryMissions",
+        Label = "Announce New Factory Missions",
+        Text = "The character speaks up when the player gets a new mission from a factory whose trades wait for it " +
+               "(or a follow-up there). Off: the character is only told silently.",
+        DefaultValue = true,
+    };
+
+    public static readonly FormBooleanField AnnounceTraderMissions = new()
+    {
+        Name = "AnnounceTraderMissions",
+        Label = "Announce New Trader Missions",
+        Text = "The character speaks up when the player gets a job from a shop that trades anyway (e.g. while checking " +
+               "every trader on a station). Off: the character is only told silently.",
+        DefaultValue = false,
+    };
+
+    public static readonly FormBooleanField AnnounceDoneFactoryMissions = new()
+    {
+        Name = "AnnounceDoneFactoryMissions",
+        Label = "Announce Completed Factory Missions",
+        Text = "The character speaks up when the player hands in a factory mission (items or work order). Off: only told silently.",
+        DefaultValue = true,
+    };
+
+    public static readonly FormBooleanField AnnounceDoneTraderMissions = new()
+    {
+        Name = "AnnounceDoneTraderMissions",
+        Label = "Announce Completed Trader Missions",
+        Text = "The character speaks up when the player finishes a job for a shop that trades anyway. Off: only told silently.",
+        DefaultValue = false,
+    };
+
+    public static readonly FormBooleanField AnnouncePursuedDone = new()
+    {
+        Name = "AnnouncePursuedDone",
+        Label = "Announce Handed-In Pursued Mission",
+        Text = "The character speaks up when the mission it was keeping track of (empyrion_pursue_quest) is handed in, " +
+               "whatever its kind. Off: only told silently.",
+        DefaultValue = true,
+    };
+
+    public static readonly FormBooleanField AnnounceItemsReady = new()
+    {
+        Name = "AnnounceItemsReady",
+        Label = "Announce Pursued Mission Items Ready",
+        Text = "The character speaks up when the player carries everything the pursued mission wants (personal inventory). Off: only told silently.",
+        DefaultValue = true,
+    };
+
     public static readonly FormTextField VcSuffix = new()
     {
         Name = "VcSuffix",
@@ -107,8 +168,8 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
     {
         Name = "PollSeconds",
         Label = "Poll Interval (seconds)",
-        Text = "How often the game state is read while a chat is open.",
-        DefaultValue = 5,
+        Text = "How often the game state is read while a chat is open (one small request to the bridge).",
+        DefaultValue = 2,
         Min = 2,
         Max = 60,
     };
@@ -143,7 +204,15 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
             ReactionCooldownSeconds,
             VcSuffix,
             VjSuffix,
-            ChatToolSettingsContributions.GetFormFields(Tools, AutoEnabledFor)
+            ChatToolSettingsContributions.GetFormFields(Tools, AutoEnabledFor),
+            // last: a title starts a section that runs to the next title, and the tool fields have none of their own
+            AnnouncementsTitle,
+            AnnounceFactoryMissions,
+            AnnounceTraderMissions,
+            AnnounceDoneFactoryMissions,
+            AnnounceDoneTraderMissions,
+            AnnouncePursuedDone,
+            AnnounceItemsReady
         );
         return Task.FromResult(fields);
     }

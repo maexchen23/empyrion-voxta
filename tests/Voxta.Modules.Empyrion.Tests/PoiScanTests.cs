@@ -18,13 +18,13 @@ public class PoiScanTests
                "members":"1 major faction base, 44 small faction outpost","turrets":182},
               {"name":"Sanctuary","class":"trading","distance":17,"faction":"Polaris","standing":"Neutral","buildings":12,"members":"3 trading, 9 other","traders":6,
                "tradingPlaces":[{"name":"Sanctuary","traders":4,"distance":17},{"name":"Solaris-AMP Factory","traders":1,"distance":420},{"name":"P3: Planetside Production","traders":1,"distance":1250}]},
-              {"name":"Abandoned Bunker","class":"abandoned dungeon","distance":4100,"terminal":"POI_AbandonedBunker_Init","onlyInRange":true}],
+              {"name":"Abandoned Bunker","class":"abandoned dungeon","distance":4100,"terminal":"Reactor Control","terminalPoi":"Abandoned Bunker","onlyInRange":true}],
              "moreGroups":3,"resources":2,"decorationLeftOut":1,"unknownToPlayer":40}
             """);
         Assert.Contains("Known POIs within 10 km on Viunean (as of 12:00:00 UTC), closest first:", text);
         Assert.Contains("- Stack-15: trading, Polaris, Neutral, 4 turrets, 1 trader, 350 m", text);
         Assert.Contains("- Placeholder Ghyst Main: major faction base complex of 45 buildings (1 major faction base, 44 small faction outpost), Ghyst, Hated, 182 turrets, 2.4 km", text);
-        Assert.Contains("- Abandoned Bunker: abandoned dungeon, info terminal at the entrance, not discovered yet, only seen, 4.1 km", text);
+        Assert.Contains("- Abandoned Bunker: abandoned dungeon, info terminal 'Reactor Control', not discovered yet, only seen, 4.1 km", text);
         Assert.Contains("trading places: Sanctuary (4 traders, 20 m); Solaris-AMP Factory (1 trader, 420 m); P3: Planetside Production (1 trader, 1.3 km)", text);
         Assert.Contains("3 more further away.", text);
         Assert.Contains("Also 2 asteroids/resource deposits.", text);
@@ -71,6 +71,21 @@ public class SystemAndTradeTests
               {"name":"Phaealla Moon","kind":"moon","type":"Lava Moon"}]}
             """));
         Assert.Equal("System Phaealla, star class K4.\nPlanets: Viunean (Stormy Desert) - the player is here.\nGas giants: Phaealla (Purple gas giant).\nMoons: Phaealla Moon (Lava Moon).", text);
+    }
+
+    [Fact]
+    public void Planet_details()
+    {
+        var text = GameView.SystemInfoResult(J("""
+            {"ok":true,"system":"Orculia","starClass":"K4","bodies":[{"name":"Viunean","kind":"planet","type":"Stormy Desert","difficulty":"Medium","here":true}],
+             "details":{"name":"Viunean","kind":"planet","type":"Stormy Desert","difficulty":"Medium","description":"A desert planet with a global dust storm.",
+               "gravityG":0.9,"atmosphere":0.73,"oxygenPercent":16,"breathable":false,"tempMin":10,"tempMax":64,"tempNight":54,"radiation":2.9,
+               "effects":["Sensor Interference: POI detection range reduced."],"resources":["Cobalt","Copper"]}}
+            """));
+        Assert.Contains("Planets: Viunean (Stormy Desert, Medium) - the player is here.", text);
+        Assert.Contains("Viunean (Stormy Desert planet, difficulty Medium):\nA desert planet with a global dust storm.\nSensor Interference: POI detection range reduced.", text);
+        Assert.Contains("gravity 0.9 g, atmosphere 0.73, oxygen 16 %, not breathable, temperature 10 to 64 °C, night 54 °C, radiation 2.9.", text);
+        Assert.Contains("Resources: Cobalt, Copper.", text);
     }
 
     [Fact]
@@ -218,6 +233,23 @@ public class ActiveStructureTests
         Assert.Null(GameView.WorkingFrom(J("""{"ok":true}""")));
         Assert.Equal("Active structure set. Working from: BA 'Home' (set by the player, 120 m away).",
             GameView.SetActiveResult(J("""{"ok":true,"mode":"set","active":{"name":"Home","type":"BA","how":"pinned","playerOn":false,"distance":118}}""")));
+    }
+}
+
+public class PoiTerminalTests
+{
+    [Fact]
+    public void Terminal_screens_with_options()
+    {
+        var text = GameView.PoiTerminalResult(JsonDocument.Parse("""
+            {"ok":true,"poi":"Abandoned Bunker","playfield":"Viunean","terminal":"Reactor Control","near":true,"visited":false,
+             "pages":[{"text":"< REACTOR CONTROL >\nTemperature: high","options":["Shut Down Reactor","Leave"]},{"text":"ACCESS DENIED","options":[]}]}
+            """).RootElement);
+        Assert.StartsWith("Info terminal 'Reactor Control' at Abandoned Bunker (Viunean).", text);
+        Assert.Contains("[screen 1]\n< REACTOR CONTROL >\nTemperature: high\n(options: Shut Down Reactor | Leave)", text);
+        Assert.Contains("[screen 2]\nACCESS DENIED", text);
+        Assert.Equal("The player has to be at 'X' (within 2 km) or have visited it to read its terminal.",
+            GameView.PoiTerminalResult(JsonDocument.Parse("""{"ok":false,"error":"The player has to be at 'X' (within 2 km) or have visited it to read its terminal."}""").RootElement));
     }
 }
 

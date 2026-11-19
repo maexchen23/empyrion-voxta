@@ -133,6 +133,7 @@ namespace VoxtaBridge
 
         static readonly Regex TurretName = new Regex(@"(?:Turret|SentryGun)[A-Za-z0-9]*", RegexOptions.Compiled);
         static readonly Regex PoiDialogueName = new Regex(@"POI_[A-Za-z0-9_]+?_Init", RegexOptions.Compiled);
+        static readonly Regex TradeDialogueName = new Regex(@"TD_[A-Za-z0-9]+_Start", RegexOptions.Compiled);
 
         /// <summary>Facts from a prefab's header alone (cheap; no traders or dialogues): group, name, tag, size in blocks, turret types.</summary>
         public static PoiFacts HeaderFacts(string prefabName, byte[] data, int headerLen = -1)
@@ -169,6 +170,9 @@ namespace VoxtaBridge
             {
                 if (facts.PoiDialogue == null) { var m = PoiDialogueName.Match(text); if (m.Success) facts.PoiDialogue = m.Value; }
                 if (!facts.HasGin && text.IndexOf("GIN_Console", StringComparison.Ordinal) >= 0) facts.HasGin = true;
+                if (text.IndexOf("TD_", StringComparison.Ordinal) >= 0)
+                    foreach (Match m in TradeDialogueName.Matches(text))
+                        if (!facts.TradeDialogues.Contains(m.Value)) facts.TradeDialogues.Add(m.Value);
             }
             ScanText(Encoding.GetEncoding(28591).GetString(data, 0, headerLen));
             prefabFacts[prefabName] = facts;

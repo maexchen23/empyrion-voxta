@@ -117,6 +117,33 @@ public sealed class BridgeClient
         return PostFormAsync("/system", form, cancellationToken);
     }
 
+    /// <summary>POST /poi-terminal: the info terminal texts of a POI the player is at or has visited.</summary>
+    public Task<JsonDocument> PoiTerminalAsync(string poi, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("poi", poi) };
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/poi-terminal", form, cancellationToken);
+    }
+
+    /// <summary>POST /quests: the player's trader missions (status open|unlocked|all, near playfield|system|LY, item).</summary>
+    public Task<JsonDocument> QuestsAsync(string? status, string? near, string? item, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrWhiteSpace(status)) form.Add(new("status", status.Trim()));
+        if (!string.IsNullOrWhiteSpace(near)) form.Add(new("near", near.Trim()));
+        if (!string.IsNullOrWhiteSpace(item)) form.Add(new("item", item.Trim()));
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/quests", form, cancellationToken);
+    }
+
+    /// <summary>POST /quest-pursue: pursue one trader mission (its line goes into the live context), or "none".</summary>
+    public Task<JsonDocument> PursueQuestAsync(string name, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("name", name) };
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/quest-pursue", form, cancellationToken);
+    }
+
     /// <summary>POST /poi-trade: what the traders at a POI sell and buy.</summary>
     public Task<JsonDocument> PoiTradeAsync(string poi, bool detail, bool all, string? steamId, CancellationToken cancellationToken)
     {

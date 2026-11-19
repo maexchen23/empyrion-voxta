@@ -40,6 +40,9 @@ public class EmpyrionAugmentationsService(
                     new AugmentationToolDeclaration(EmpyrionConstants.SetActiveStructureTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.SystemInfoTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.PoiTradeTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.PoiTerminalTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.ListQuestsTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.PursueQuestTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.MarkStarsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.ClearMarksTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.AddMapMarkerTool, EmpyrionConstants.ContextKey),
@@ -64,10 +67,17 @@ public class EmpyrionAugmentationsService(
                     var live = new LiveSettings(
                         Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.LiveContext), true),
                         Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.Reactions), true),
-                        TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.PollSeconds), 5), 2, 60)),
+                        TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.PollSeconds), 2), 2, 60)),
                         TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.ReactionCooldownSeconds), 30), 0, 600)),
                         Setting(() => ModuleConfiguration.GetOptional(ModuleConfigurationProvider.VcSuffix), null) is { Length: > 0 } vc ? vc.Trim() : "VC",
-                        Setting(() => ModuleConfiguration.GetOptional(ModuleConfigurationProvider.VjSuffix), null) is { Length: > 0 } vj ? vj.Trim() : "VJ");
+                        Setting(() => ModuleConfiguration.GetOptional(ModuleConfigurationProvider.VjSuffix), null) is { Length: > 0 } vj ? vj.Trim() : "VJ",
+                        new MissionAnnounce(
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceFactoryMissions), true),
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceTraderMissions), false),
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceDoneFactoryMissions), true),
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceDoneTraderMissions), false),
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnouncePursuedDone), true),
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceItemsReady), true)));
 
                     var instance = new EmpyrionChatAugmentationInstance(
                         session,

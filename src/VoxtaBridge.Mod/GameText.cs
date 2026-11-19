@@ -321,7 +321,7 @@ namespace VoxtaBridge
             }
         }
 
-        static IEnumerable<List<string>> ReadCsv(TextReader reader)
+        public static IEnumerable<List<string>> ReadCsv(TextReader reader)
         {
             var row = new List<string>();
             var field = new StringBuilder();
