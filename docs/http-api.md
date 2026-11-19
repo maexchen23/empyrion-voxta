@@ -1,0 +1,36 @@
+# VoxtaBridge HTTP API
+
+The game mod's HTTP listener (dedicated server, default port **30016**). The Voxta module is the only intended client;
+this is the reference for developers. Every endpoint except `/ping` needs `Authorization: Bearer <token>` (the token
+from `VoxtaBridge.cfg`). `player` is a SteamID64; without it the only player online is used.
+
+## Endpoints
+
+| Endpoint | Auth | Returns |
+|---|---|---|
+| `GET /ping` | none | mod, version, process mode, uptime |
+| `GET /status` | `Authorization: Bearer <token>` | players (ModApi v2 + API1 `Player_Info`), latest snapshot per loaded playfield (players, current structure incl. tanks/shield, entity counts by type) |
+| `GET /debug/loadpf/<name>` | token | asks the server to load a playfield for 120 s (API1 `Request_Load_Playfield`), to test without a player |
+| `POST /transfer` | token | form body `item`, `amount` (number or `all`), `to`, optional `from`, `player` (SteamID64; optional if one player is online). Moves items between containers of the structure the player is in and its docked vessels. Answers `{"ok":…,"moved":…,"from":[…],"note":…}` or `{"ok":false,"error":…}`; every call is written to `VoxtaBridge.audit.log` |
+
+| `POST /find` | token | form body `item` (name or part), optional `player`: where an item is (player bag/toolbar + every container in reach), totals per item, weapon state; logs a timing line per search |
+| `POST /items` | token | form body `query`: search the game's item list (config files, no player needed): exact names, craftable + constructors, weapon → ammo, ammo → weapons (player-facing, scenario-defined only); > 5 matches → names only |
+| `POST /craft` | token | form body `item`, `amount`, `vc` (suffix, default `VC`), `confirm` (0 = plan only, 1 = craft), optional `player`: virtual crafting from the one container whose name ends with the suffix (docking group); recipes from Templates.ecf incl. intermediates; results + leftovers back into it; `RequireConstructor` (cfg, default false) checks constructor blocks on the ship |
+| `POST /containers` | token | form body `structure` (name), optional `player`: containers of one structure in the player's transfer scope |
+| `POST /where-to-buy` | token | form body `item`, optional `player` (and `at=<playfield>` for tests without a player): traders selling the item, their POIs and where those spawn (scenario TraderNPCConfig/Factions/DefReputation, playfield yamls, prefabs), the player's known sellers (visited POIs + trades) with LY, closest stars likely to have one (star class + territory only); places of factions below Neutral for the player's faction (save `game.dat`) are left out (listed as `hidden`); `knownPlanets`: bodies of discovered systems whose planet type (scenario playfields with that `PlanetType`) can spawn a matching trader POI, chance from spawn configs and territory, closest first |
+| `POST /pois` | token | form body `scope` (`nearby` = 10 km, default, or `all`), optional `player`: POIs on the player's playfield that the player or their faction discovered, or that are loaded within 2 km, classified (trading / major faction base / small faction outpost / abandoned dungeon / wreck-salvage / civilian; resources counted, decoration left out), same-faction buildings within 600 m grouped into complexes with summed turrets (`cpgTurret`), faction and standing tier, distance; closest 10 groups; `yourStructures`: own/faction root structures (not docked, not the one the player is in) within 2 km |
+| `POST /active` | token | form body `name` (own structure name, or `auto`), optional `player`: set the player's active structure (the one containers, find, transfers, inventory moves and crafting work from; default: aboard → last aboard in transfer range → nearest own in range); every item answer carries `workingFrom` (name, type, how, distance, note) |
+| `POST /structure` | token | form body `name`, optional `player`: one of the player's (or faction's) own structures on the current playfield (exact, prefix, contains; closest first): type, size, power, shield, mass, pilot, tanks, distance, `dockedTo`, docked vessels, container count; never someone else's structure or a POI |
+| `POST /system` | token | optional `system` (system or body name, default the current system; `known` = list of discovered systems), optional `player`: star class and planets, moons, gas giants with planet types (`global.db` Playfields) of a system the player or their faction discovered (any `DiscoveredPlayfields` row in it; `entered` = that body itself) |
+| `POST /poi-trade` | token | form body `poi` (name or part), `detail` (1 = credits, only for POIs the player visited; no stock: not readable), `all` (1 = include everyday goods: food, ingredients, farming, deco/building blocks, market price < 1000), optional `player`: the POI's traders and the item names they sell and buy (TraderNPCConfig) grouped by price tier against the item's `MarketPrice` (below < 0.9, about ≤ 1.15, above ≤ 1.5, far above; `mf=` prices are factors of it), credits with `detail`; the POI is looked up among the POIs the player or their faction discovered (current playfield first), else by prefab display name as a general answer (`general`) |
+| `GET /debug/pois/<playfield>` | token | every POI on a playfield with class, reason, turrets/sentries and whether anyone discovered it |
+| `POST /marks` | token | form body `action` (`add`, `permanent`, `clear`, `list`), `stars` (comma separated), `numbered` (1 = route), `replace` (0 keeps earlier ones), optional `player`: Voxta's star markers on the galaxy map (private star bookmarks in `global.db` named `… (Voxta)`; rows are reused by moving/renaming; reached = `done: …`; deletions only when the player is offline); `permanent` with `star`, `name`, `hud` (0/1) writes a marker the player keeps (no suffix, never touched again; names ending in `(Voxta)` refused) |
+
+Transfer scope: the docking group of the structure the player is in (its carrier if docked, plus everything docked to the carrier), plus own structures within `TransferRangeMeters` (core to core) and their docking groups.
+
+Config keys in `VoxtaBridge.cfg` (defaults): `TransfersEnabled=true`, `RequireOwnership=true` (structures must belong to the player or their faction), `MaxItemsPerTransfer=10000`, `TransferRangeMeters=1000` (0 = docking only), `PlayerVolumeLimit=1000` (litres; giving to a player stops there, 0 = no limit; the real capacity depends on armor/boosts, which the mod can't see).
+
+Micro jump keys: `MicroJumpEnabled=true`, `MicroJumpMinMeters=1000`, `MicroJumpMaxMeters=25000`, `MicroJumpCooldownSeconds=60`, `MicroJumpBodyClearanceMeters=2000` (aimed jumps at a planet or moon stop this far above its estimated surface; other targets: their size + 500 m), `MicroJumpHitLockSeconds=30` (no jump this long after the ship was hit: shield drop or block damage, sampled every second on the playfield server; 0 = off),
+`MicroJumpRequireDrive=true`, `MicroJumpKmPerPentaxid=5` (cost = distance / this, rounded up, at least 1; paid with Refined
+Pentaxid from the one container on the ship whose name ends with the suffix Voxta sends as `vj`, set in the Voxta module
+setting "Jump Container Suffix", default `VJ`; refused if none, several or too little). Keys missing from an existing cfg use these defaults.

@@ -1,0 +1,7 @@
+Name: VoxtaBridge
+Description: Bridge between Empyrion and the Voxta AI companion (phase 0 spike)
+Author: Maexchen
+Version: 0.0.1
+
+# Dedi: listener + routing; PfServer: structure/player data. Client stays off until single player is supported.
+ModTargets: Dedi,PfServer

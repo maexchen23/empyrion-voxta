@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Empyrion runs mods on Unity's Mono (MonoBleedingEdge); Eleon's DemoMod targets .NET Framework 4.6.1. -->
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>VoxtaBridge</AssemblyName>
+    <RootNamespace>VoxtaBridge</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <Version>0.0.1</Version>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets the net48 build run on Linux without Mono/Windows targeting packs. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copied from the dedicated server's Managed folder (see tools/fetch-refs.sh); never shipped with the mod. -->
+    <Reference Include="ModApi"><HintPath>..\..\lib\ModApi.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mif"><HintPath>..\..\lib\Mif.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>..\..\lib\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>..\..\lib\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mono.Data.Sqlite"><HintPath>..\..\lib\Mono.Data.Sqlite.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="protobuf-net"><HintPath>..\..\lib\protobuf-net.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="VoxtaBridge_Info.yaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

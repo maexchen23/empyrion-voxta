@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- Tests the game-independent parts of the mod (compiled in directly; the mod itself targets net48 + game DLLs). -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>disable</Nullable>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="..\..\src\VoxtaBridge.Mod\GameText.cs" Link="GameText.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\Transfers.cs" Link="Transfers.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\Form.cs" Link="Form.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\Stacks.cs" Link="Stacks.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\Recipes.cs" Link="Recipes.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\ItemSearch.cs" Link="ItemSearch.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\SizeMemory.cs" Link="SizeMemory.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\JumpRules.cs" Link="JumpRules.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\TraderIndex.cs" Link="TraderIndex.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\GalaxyOdds.cs" Link="GalaxyOdds.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\StarMarks.cs" Link="StarMarks.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\PoiClass.cs" Link="PoiClass.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\PoiScan.cs" Link="PoiScan.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+        <PackageReference Include="xunit" Version="2.9.3" />
+        <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    </ItemGroup>
+
+</Project>

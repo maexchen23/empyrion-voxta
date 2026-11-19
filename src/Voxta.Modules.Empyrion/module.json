@@ -1,0 +1,9 @@
+{
+  "id": "Voxta.Modules.Empyrion",
+  "version": "0.2.0",
+  "author": "Maexchen",
+  "voxta": ">=1.13.0",
+  "label": "Empyrion: Galactic Survival",
+  "category": "Games",
+  "description": "Connects a character to the VoxtaBridge mod on an Empyrion dedicated server: live game state, cargo, crafting, trading, POIs, galaxy markers."
+}

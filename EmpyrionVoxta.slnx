@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Voxta.Modules.Empyrion/Voxta.Modules.Empyrion.csproj" />
+    <Project Path="src/VoxtaBridge.Mod/VoxtaBridge.Mod.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Voxta.Modules.Empyrion.Tests/Voxta.Modules.Empyrion.Tests.csproj" />
+    <Project Path="tests/VoxtaBridge.Mod.Tests/VoxtaBridge.Mod.Tests.csproj" />
+  </Folder>
+</Solution>

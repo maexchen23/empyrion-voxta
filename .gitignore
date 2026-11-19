@@ -1,0 +1,7 @@
+# Game DLLs are proprietary (Eleon/Unity): copied from the server install, never committed.
+lib/*.dll
+bin/
+obj/
+dist/
+*.user
+build/

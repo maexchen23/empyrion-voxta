@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <!-- Dependencies next to the DLL, so Voxta can load the build folder as a dev folder (1.13+). -->
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Voxta.Modules.Empyrion</RootNamespace>
+        <AssemblyName>Voxta.Modules.Empyrion</AssemblyName>
+        <Version>0.0.1</Version>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Oldest Voxta supported (module.json "voxta"); Voxta provides it at runtime. 1.13: module.json, skills, .NET 11. -->
+        <PackageReference Include="Voxta.Sdk.Modules" Version="1.13.0" ExcludeAssets="runtime" />
+    </ItemGroup>
+
+</Project>
