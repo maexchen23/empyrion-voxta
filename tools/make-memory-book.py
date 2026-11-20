@@ -6,7 +6,7 @@ import json, uuid, datetime, pathlib
 
 NS = uuid.UUID("6f1c5c1e-7a1e-4b8e-9a51-2f0e0c0e5a11")
 BOOK_ID = str(uuid.uuid5(NS, "book"))
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
 
 entries = [
@@ -19,7 +19,9 @@ entries = [
     ('tokens', ['token', 'keycard', 'guide', 'trading card', 'Empyriopedia'],
      "Tokens are special items like keycards, guides and trading cards. They show their real names, e.g. 'Reforged Eden 2 Gameplay Guide' or 'Trading Card - Akua', and their description. You can move tokens like other items; they keep their identity."),
     ('events', ['warning', 'event', 'low oxygen', 'arrived', 'fuel', 'react'],
-     'You speak up on your own (at most every 30 seconds) when the player arrives on another playfield (warn about PvP zones), health, suit oxygen or food get low or critical, ship fuel gets low or empty, the shield goes down, a factory blueprint is ready, or the player dies or joins. Boarding or leaving a ship, and taking or leaving its pilot seat, is passed to you silently. Only changes are reported.'),
+     'You speak up on your own (at most every 30 seconds) about game events the player switched on in the module settings: by default arriving on another playfield (warning about PvP zones), health, suit oxygen and food dropping to warning, low or empty levels (health empty means the player died), ship fuel and the ship oxygen tank running out (then the player breathes suit oxygen), the shield going down, a new ship or base spawned from a blueprint or a starter block placed, new or finished factory missions and a factory blueprint being ready. Others, like entering or leaving a ship or base and taking or leaving a pilot seat, are passed to you silently. Only changes are reported.'),
+    ('structure-types', ['BA', 'CV', 'SV', 'HV', 'base', 'capital vessel', 'small vessel', 'hover vessel', 'ship types', 'docking'],
+     "Empyrion has four kinds of structures. BA: a base; it doesn't move, it stands on a planet or floats in space. CV: a capital vessel; large, used mostly in space and to travel between planets and systems (most of its heavy weapons and its drills can't fire in an atmosphere); it can be a combat ship, mobile base, carrier, space miner or a mix. SV: a small vessel; usually used on planets, to mine surface deposits or attack planetary POIs. HV: a hover vessel; a ground vehicle that hovers close to the surface, e.g. a miner or a heavy tank against planetary POIs; in space it can barely move. Ships dock to other ships or to bases, usually to one of the same size or larger (SVs and HVs to a CV or a base, a CV to a CV), but only one level deep: nothing docks to a ship that is itself docked, so a CV parks next to a base instead of docking (it still counts as in reach). A starter block creates a new structure of one of these types."),
     ('limits', ["can't", 'cannot', 'fly', 'warp', 'PDA', 'mission', 'limit'],
      "You can't steer ships (only micro jump them, skill empyrion-micro-jump), warp or lock warp targets (you can only mark stars on the galaxy map, skill empyrion-galaxy-markers), fight, or open the PDA and mission texts. You only see live data from the playfield the player is on; ships parked elsewhere are out of sight. Trader stock and prices aren't visible live."),
     ('galaxy-hints', ['star class', 'G class', 'F class', 'A class', 'M class', 'neutral territory', 'where to find', 'research vessel', 'casino'],

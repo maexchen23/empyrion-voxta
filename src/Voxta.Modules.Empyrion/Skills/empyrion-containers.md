@@ -23,7 +23,8 @@ metadata:
 
 - The active structure, the ships docked to it (or, if it is docked, its carrier and everything docked there), and the
   player's own ships and bases within about 1 km, like the game's matter transmitters.
-- Ships never dock to bases; they only hover near them. There is no chain docking.
+- SVs and HVs dock to CVs and to bases; a CV can dock to a CV. Only one level deep (nothing docks to a ship that is
+  itself docked), so a CV parks next to a base instead of docking; the base is still in reach through transfer range.
 - `empyrion_get_current_ship` shows the tree "Structures in reach"; the containers of other structures in range only with
   `structure=<name>`.
 - `empyrion_get_structure` gives the status of any own ship or base on the playfield (tanks, power, shield, what is docked).

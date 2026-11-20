@@ -14,7 +14,7 @@ namespace Voxta.Modules.Empyrion.ChatAugmentations;
 /// <param name="ReactionCooldown">Minimum time between two spoken reactions.</param>
 /// <param name="VcSuffix">Name suffix of the crafting container.</param>
 public sealed record LiveSettings(bool LiveContext, bool Reactions, TimeSpan PollInterval, TimeSpan ReactionCooldown, string VcSuffix = "VC",
-    MissionAnnounce? Missions = null, bool GameChat = true, bool GameChatMirror = false);
+    GameEventConfig? Events = null, bool GameChat = true, bool GameChatMirror = false);
 
 public sealed class EmpyrionChatAugmentationInstance(
     IChatSessionChatAugmentationApi session,
@@ -23,6 +23,7 @@ public sealed class EmpyrionChatAugmentationInstance(
     ChatStyles[] chatStyles,
     Func<string, bool> isToolSelected,
     LiveSettings live,
+    WatchStore watches,
     ILogger<EmpyrionChatAugmentationInstance> logger
 ) : IToolsChatAugmentation, IChatPostProcessAugmentation
 {
@@ -50,6 +51,10 @@ public sealed class EmpyrionChatAugmentationInstance(
     private const string TextArg = "text";
     private const string NearArg = "near";
     private const string ChangesArg = "changes";
+    private const string ActionArg = "action";
+    private const string ConditionsArg = "conditions";
+    private const string NoteArg = "note";
+    private const string IdArg = "id";
 
     private readonly CancellationTokenSource _stop = new();
     private Task? _poller;
@@ -395,6 +400,45 @@ public sealed class EmpyrionChatAugmentationInstance(
                 Display = ToolDisplayMode.Card,
             },
             new ChatTool(
+                EmpyrionConstants.WatchTool,
+                "Watches ('tell me when …'): be notified when a simple game state changes, then decide what to do (e.g. " +
+                "power a docked miner down when the player leaves it). A watch is a list of field=value conditions that all " +
+                "must match an event, plus a note why. Actions: add, list, remove. Skill empyrion-watches has the fields.",
+                ChatToolSchema.FromArguments([
+                    new FunctionArgumentDefinition
+                    {
+                        Name = ActionArg, Type = FunctionArgumentType.String, Required = true,
+                        Description = "add, list or remove.", Choices = ["add", "list", "remove"],
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = ConditionsArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "For add: 'field=value' pairs separated by ';', all must match, e.g. 'event=left; structure=Miner; docked=true'. " +
+                                      "event: seat_taken, seat_left, entered, left, docked, undocked, landed, lifted_off, signal, device, " +
+                                      "new_structure (spawned from a blueprint), starter_placed. " +
+                                      "Other fields: structure (ship or base name), type (ba/cv/sv/hv), seat (pilot/aboard/on_foot), where (space/planet), playfield, landed, docked (true/false), " +
+                                      "docked_to, other_structure, name (signal/device name), state (on/off).",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = NoteArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "For add: why, and what to do when it fires, e.g. 'power the miner down'. Comes back with the notification.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = IdArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "For remove: the watch id from list, or 'all'.",
+                    },
+                ]),
+                EmpyrionConstants.ContextKey)
+            {
+                AugmentationKey = EmpyrionConstants.AugmentationKey,
+                ChatStyles = chatStyles,
+                Enabled = isToolSelected(EmpyrionConstants.WatchTool),
+                Permission = ToolPermissionClass.InChat,
+                Display = ToolDisplayMode.Pill,
+            },
+            new ChatTool(
                 EmpyrionConstants.TransferItemsTool,
                 "Move items between containers in reach (ship, carrier, docked ships, own structures in range) and the player's " +
                 "own inventory. Use the container labels from empyrion_get_current_ship; use 'player' (or 'bag' / 'toolbar') for " +
@@ -580,6 +624,8 @@ public sealed class EmpyrionChatAugmentationInstance(
             var target = GetString(arguments, NameArg) is { Length: > 0 } n ? n.Trim() : "auto";
             return await BridgeCallAsync(() => client.SetActiveAsync(target, steamId, cancellationToken), GameView.SetActiveResult);
         }
+        if (name == EmpyrionConstants.WatchTool)
+            return WatchTool(arguments);
         if (name == EmpyrionConstants.FindShipControlsTool)
         {
             if (GetString(arguments, QueryArg) is not { Length: > 0 } controlQuery)
@@ -821,6 +867,33 @@ public sealed class EmpyrionChatAugmentationInstance(
         GameView.WorkingFrom(root) is { } w ? $"{text}\n{w}" : text;
 
     /// <summary>A read call to the bridge rendered by <paramref name="render"/>; ok=false answers are errors for the model.</summary>
+    private ChatToolCallResult WatchTool(JsonElement? arguments)
+    {
+        var action = (GetString(arguments, ActionArg) ?? "list").Trim().ToLowerInvariant();
+        if (action == "add")
+        {
+            if (Watches.Parse(GetString(arguments, ConditionsArg), out var error) is not { } conditions)
+                return new ChatToolCallResult(error ?? "Bad conditions.", IsError: true);
+            var note = (GetString(arguments, NoteArg) ?? "").Trim();
+            if (note.Length == 0) return new ChatToolCallResult($"'{NoteArg}' is required: why the watch, and what to do when it fires.", IsError: true);
+            if (note.Length > 300) note = note[..300];
+            if (watches.Add(conditions, note, out var addError) is not { } w) return new ChatToolCallResult(addError ?? "Could not add the watch.", IsError: true);
+            logger.LogInformation("Empyrion watch #{Id} added: {Conditions}", w.Id, w.ConditionText);
+            return new ChatToolCallResult($"Watch #{w.Id} added: {w.ConditionText} (note: {w.Note}). It fires when an event matches all conditions.");
+        }
+        if (action == "remove")
+        {
+            var idText = (GetString(arguments, IdArg) ?? "").Trim();
+            if (idText.Equals("all", StringComparison.OrdinalIgnoreCase))
+                return new ChatToolCallResult($"Removed all watches ({watches.Remove(null)}).");
+            if (!int.TryParse(idText.TrimStart('#'), out var id)) return new ChatToolCallResult($"'{IdArg}' must be a watch id from list, or 'all'.", IsError: true);
+            return watches.Remove(id) > 0 ? new ChatToolCallResult($"Watch #{id} removed.") : new ChatToolCallResult($"There is no watch #{id}.", IsError: true);
+        }
+        var all = watches.All;
+        if (all.Count == 0) return new ChatToolCallResult("No watches set.");
+        return new ChatToolCallResult(string.Join("\n", all.Select(w => $"#{w.Id}: {w.ConditionText} (note: {w.Note})")));
+    }
+
     private static async ValueTask<ChatToolCallResult> BridgeCallAsync(Func<Task<JsonDocument>> call, Func<JsonElement, string> render)
     {
         try
@@ -959,6 +1032,8 @@ public sealed class EmpyrionChatAugmentationInstance(
         var warpSmoother = new WarpSmoother();
         var gameChat = new GameChatFilter(null);
         var nearbyAt = DateTimeOffset.MinValue;
+        var watchStates = new Dictionary<string, (string kind, string state, string ship)>();
+        var watchFired = new Dictionary<int, DateTimeOffset>();
 
         while (!ct.IsCancellationRequested)
         {
@@ -1020,7 +1095,7 @@ public sealed class EmpyrionChatAugmentationInstance(
 
                 if (live.Reactions)
                 {
-                    var events = GameEvents.Diff(previous, state, firstPoll, live.Missions);
+                    var events = GameEvents.Diff(previous, state, firstPoll, live.Events);
                     // a new mission: say what of it is already in reach (only for the ones spoken about)
                     for (var i = 0; i < events.Count; i++)
                         if (events[i] is { MissionKey: { } key, Important: true } ev &&
@@ -1028,6 +1103,9 @@ public sealed class EmpyrionChatAugmentationInstance(
                             events[i] = ev with { Description = ev.Description + " " + await ReachTextAsync(needs, ct) };
                     if (events.Count > 0) lastSpoken = await DeliverAsync(events, lastSpoken, ct);
                 }
+
+                if (isToolSelected(EmpyrionConstants.WatchTool) && watches.All is { Count: > 0 } active)
+                    watchStates = await CheckWatchesAsync(active, previous, state, firstPoll, watchStates, watchFired, ct);
 
                 previous = state;
                 firstPoll = false;
@@ -1059,6 +1137,60 @@ public sealed class EmpyrionChatAugmentationInstance(
             try { await Task.Delay(live.PollInterval, ct); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    /// <summary>
+    /// Builds this poll's watch events (ship, seat, docking, landing, and the watched signals/devices, asked from the
+    /// bridge only when such watches exist), matches them and delivers the fired watches: always (they were set on
+    /// purpose, no reaction cooldown), but each watch at most once per <see cref="Watches.Cooldown"/>. Returns the
+    /// signal/device states for the next poll.
+    /// </summary>
+    private async Task<Dictionary<string, (string kind, string state, string ship)>> CheckWatchesAsync(IReadOnlyList<Watch> active,
+        GameState? previous, GameState? state, bool firstPoll,
+        Dictionary<string, (string kind, string state, string ship)> prevStates, Dictionary<int, DateTimeOffset> fired, CancellationToken ct)
+    {
+        var states = new Dictionary<string, (string kind, string state, string ship)>(StringComparer.OrdinalIgnoreCase);
+        if (state == null) return states;
+        foreach (var (ship, names) in Watches.WatchedNames(active))
+        {
+            try
+            {
+                using var doc = await client.DeviceStatesAsync(names, ship.Length > 0 ? ship : null, steamId, ct);
+                var r = doc.RootElement;
+                if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)) continue;
+                var structure = r.TryGetProperty("structure", out var st) ? st.GetString() ?? ship : ship;
+                foreach (var x in r.GetProperty("states").EnumerateArray())
+                {
+                    var name = x.GetProperty("name").GetString() ?? "";
+                    var kind = x.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() ?? "" : "";
+                    states[$"{structure}|{name}"] = (kind, x.GetProperty("state").GetString() ?? "", structure);
+                }
+            }
+            catch (Exception exc) when (exc is not OperationCanceledException)
+            {
+                logger.LogDebug("Empyrion watch states failed: {Message}", exc.Message);
+            }
+        }
+        if (firstPoll) return states;
+
+        var events = Watches.Diff(previous, state).Concat(Watches.StateEvents(state, prevStates, states)).ToList();
+        var now = DateTimeOffset.UtcNow;
+        var texts = new List<string>();
+        foreach (var w in active)
+        {
+            var hit = events.FirstOrDefault(e => Watches.Matches(w, e));
+            if (hit == null) continue;
+            if (fired.TryGetValue(w.Id, out var last) && now - last < Watches.Cooldown) continue;
+            fired[w.Id] = now;
+            logger.LogInformation("Empyrion watch #{Id} fired: {Event}", w.Id, string.Join(", ", hit.Select(kv => $"{kv.Key}={kv.Value}")));
+            texts.Add(Watches.Notification(w, hit));
+        }
+        if (texts.Count > 0)
+        {
+            await session.SendSecretAsync(string.Join("\n", texts), cancellationToken: ct);
+            await session.TriggerReplyAsync(ct);
+        }
+        return states;
     }
 
     /// <summary>

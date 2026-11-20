@@ -230,6 +230,15 @@ public sealed class BridgeClient
         return PostFormAsync("/devices", form, cancellationToken);
     }
 
+    /// <summary>POST /devices action=states: on/off of the named signals and devices only (for watches).</summary>
+    public Task<JsonDocument> DeviceStatesAsync(IEnumerable<string> names, string? structure, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("action", "states"), new("names", string.Join(";", names)) };
+        if (!string.IsNullOrWhiteSpace(structure)) form.Add(new("structure", structure.Trim()));
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/devices", form, cancellationToken);
+    }
+
     private async Task<JsonDocument> PostFormAsync(string path, List<KeyValuePair<string, string>> form, CancellationToken cancellationToken)
     {
         if (_token.Length == 0)

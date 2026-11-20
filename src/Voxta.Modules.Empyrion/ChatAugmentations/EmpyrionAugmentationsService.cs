@@ -4,6 +4,7 @@ using Voxta.Abstractions.Registration;
 using Voxta.Abstractions.Services;
 using Voxta.Abstractions.Services.Agents;
 using Voxta.Abstractions.Services.ChatAugmentations;
+using Voxta.Abstractions.Utils;
 using Voxta.Modules.Empyrion.Bridge;
 using Voxta.Modules.Empyrion.Configuration;
 
@@ -11,6 +12,7 @@ namespace Voxta.Modules.Empyrion.ChatAugmentations;
 
 public class EmpyrionAugmentationsService(
     ILocalEncryptionProvider encryptionProvider,
+    ICommonFolders commonFolders,
     ILogger<EmpyrionAugmentationsService> logger,
     ILoggerFactory loggerFactory
 ) : ServiceBase(logger), IToolsChatAugmentationsService
@@ -54,6 +56,7 @@ public class EmpyrionAugmentationsService(
                     new AugmentationToolDeclaration(EmpyrionConstants.TransferItemsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.FindShipControlsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.ShipControlTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.WatchTool, EmpyrionConstants.ContextKey),
                 ],
                 Activation = AugmentationActivation.OptIn,
                 Suggested = false,
@@ -64,6 +67,13 @@ public class EmpyrionAugmentationsService(
                         ModuleConfiguration.GetRequired(ModuleConfigurationProvider.BridgeUrl),
                         BridgeSecrets.RevealToken(encryptionProvider, ModuleConfiguration.GetOptional(ModuleConfigurationProvider.Token)));
                     var steamId = ModuleConfiguration.GetOptional(ModuleConfigurationProvider.SteamId);
+                    // watches: one file per game server (bridge URL) and player, in the module's own data folder
+                    var watchFolder = commonFolders.GetDataFolder("Voxta.Modules.Empyrion", "watches");
+                    Directory.CreateDirectory(watchFolder);
+                    var watches = new WatchStore(watchFolder, ModuleConfiguration.GetRequired(ModuleConfigurationProvider.BridgeUrl),
+                        string.IsNullOrWhiteSpace(steamId) ? "-" : steamId.Trim(),
+                        Math.Max(1, Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.MaxWatches), Watches.DefaultMaxWatches)),
+                        message => logger.LogWarning("Empyrion {Message}", message));
                     bool Selected(string tool) => ChatToolSettingsContributions.IsToolSelected(
                         ModuleConfiguration, ModuleConfigurationProvider.Tools, tool);
 
@@ -73,13 +83,10 @@ public class EmpyrionAugmentationsService(
                         TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.PollSeconds), 2), 2, 60)),
                         TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.ReactionCooldownSeconds), 30), 0, 600)),
                         Setting(() => ModuleConfiguration.GetOptional(ModuleConfigurationProvider.VcSuffix), null) is { Length: > 0 } vc ? vc.Trim() : "VC",
-                        new MissionAnnounce(
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceFactoryMissions), true),
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceTraderMissions), false),
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceDoneFactoryMissions), true),
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceDoneTraderMissions), false),
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnouncePursuedDone), true),
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceItemsReady), true)),
+                        Setting(() => GameEventConfig.From(
+                            id => ModuleConfiguration.GetOptional(GameEventSettings.EventChoiceFields.First(f => f.Name == "Event_" + id)),
+                            ModuleConfiguration.GetOptional<Dictionary<string, string>>(GameEventSettings.LevelsField)?
+                                .Select(r => (IReadOnlyDictionary<string, string>)r)), GameEventConfig.Default),
                         Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.GameChat), true),
                         Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.GameChatMirror), false));
 
@@ -90,6 +97,7 @@ public class EmpyrionAugmentationsService(
                         chatStyles,
                         Selected,
                         live,
+                        watches,
                         loggerFactory.CreateLogger<EmpyrionChatAugmentationInstance>());
                     instance.Start();
                     return Task.FromResult<IChatAugmentationServiceInstanceBase?>(instance);

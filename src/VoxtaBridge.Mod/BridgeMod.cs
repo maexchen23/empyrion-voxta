@@ -446,10 +446,12 @@ namespace VoxtaBridge
                     }
                     foreach (var pf in loaded)
                     {
+                        try { TrackNewStructures(pf); } catch (Exception e) { Log($"new structures for {pf.Name} failed: {e.Message}"); }
                         SendSnapshot(pf);
                         try { SendBoxes(pf); } catch (Exception e) { Log($"boxes for {pf.Name} failed: {e.Message}"); }
                         try { ProbeNpcs(pf); } catch (Exception e) { Log($"probe npcs: {e.Message}"); }
                         try { ProbeControl(pf); } catch (Exception e) { Log($"probe control: {e.Message}"); }
+                        try { ProbeNewStructures(pf); } catch (Exception e) { Log($"probe new structures: {e.Message}"); }
                         try { ProbeCommands(pf); } catch (Exception e) { Log($"probe commands: {e.Message}"); }
                     }
                     ForgetAbsentPlayers(loaded);
@@ -485,6 +487,7 @@ namespace VoxtaBridge
                     .Vec("pos", p.Position.x, p.Position.y, p.Position.z)
                     .Prop("health", p.Health).Prop("oxygen", p.Oxygen).Prop("food", p.Food)
                     .Prop("isPilot", p.IsPilot).Prop("bagStacks", p.Bag?.Count ?? 0);
+                try { WriteNewStructures(j, p); } catch (Exception e) { Log($"new structures for {p.Name}: {e.Message}"); }
 
                 var active = ResolveActive(pf, p, config?.RequireOwnership ?? true, config?.TransferRangeMeters ?? 0);
                 var s = active.Structure;
@@ -534,6 +537,10 @@ namespace VoxtaBridge
                 .Prop("powered", s.IsPowered).Prop("shieldActive", s.IsShieldActive).Prop("shield", s.ShieldLevel)
                 .Prop("mass", s.TotalMass).Prop("pilot", s.Pilot?.Name);
             if (e != null) j.Vec("worldPos", e.Position.x, e.Position.y, e.Position.z);
+            if (DockedToName(s) is { } carrier) j.Prop("dockedTo", carrier);
+            // maximum shield: game internals, verified game builds only (absent otherwise)
+            try { if (GameInternals.Shield(s, Unverified, out _) is { Capacity: { } cap } && cap > 0) j.Prop("shieldCapacity", cap); } catch { }
+            if (LandingGearDown(s) is { } landed) j.Prop("landed", landed);
             Tank(j, "fuel", s.FuelTank);
             Tank(j, "oxygen", s.OxygenTank);
             Tank(j, "pentaxid", s.PentaxidTank);

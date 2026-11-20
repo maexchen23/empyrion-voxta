@@ -48,6 +48,7 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         new(EmpyrionConstants.TransferItemsTool, "Transfer Items (changes the game)"),
         new(EmpyrionConstants.FindShipControlsTool, "Find Ship Controls"),
         new(EmpyrionConstants.ShipControlTool, "Ship Control: Power, Shield, Signals, Devices (changes the game)"),
+        new(EmpyrionConstants.WatchTool, "Watches: Tell Me When …"),
     ];
 
     public static readonly FormTextField BridgeUrl = new()
@@ -93,63 +94,23 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         DefaultValue = true,
     };
 
-    /// <summary>Folded section (Advanced on the title folds all of it): grows with every tracked quest type.</summary>
-    public static readonly FormTitleField AnnouncementsTitle = Folded(FormTitleField.Create(
-        "Mission Announcements",
-        text: "Which trader missions the character speaks up about (needs 'React to Game Events'); the others are only passed on silently."));
-
     private static FormTitleField Folded(FormTitleField title) { title.Advanced = true; return title; }
 
-    public static readonly FormBooleanField AnnounceFactoryMissions = new()
-    {
-        Name = "AnnounceFactoryMissions",
-        Label = "Announce New Factory Missions",
-        Text = "The character speaks up when the player gets a new mission from a factory whose trades wait for it " +
-               "(or a follow-up there). Off: the character is only told silently.",
-        DefaultValue = true,
-    };
+    /// <summary>Folded section with the vitals and tank levels.</summary>
+    public static readonly FormTitleField VitalsTitle = Folded(FormTitleField.Create(
+        "Vitals and Tanks",
+        text: "When the character hears about the player's vitals and the ship's tanks (needs 'React to Game Events')."));
 
-    public static readonly FormBooleanField AnnounceTraderMissions = new()
-    {
-        Name = "AnnounceTraderMissions",
-        Label = "Announce New Trader Missions",
-        Text = "The character speaks up when the player gets a job from a shop that trades anyway (e.g. while checking " +
-               "every trader on a station). Off: the character is only told silently.",
-        DefaultValue = false,
-    };
+    /// <summary>Folded section with the predefined game events (replaces "Mission Announcements").</summary>
+    public static readonly FormTitleField GameEventsTitle = Folded(FormTitleField.Create(
+        "Game Events",
+        text: "Which game events the character reacts to, is only told about, or ignores (needs 'React to Game Events')."));
 
-    public static readonly FormBooleanField AnnounceDoneFactoryMissions = new()
-    {
-        Name = "AnnounceDoneFactoryMissions",
-        Label = "Announce Completed Factory Missions",
-        Text = "The character speaks up when the player hands in a factory mission (items or work order). Off: only told silently.",
-        DefaultValue = true,
-    };
 
-    public static readonly FormBooleanField AnnounceDoneTraderMissions = new()
-    {
-        Name = "AnnounceDoneTraderMissions",
-        Label = "Announce Completed Trader Missions",
-        Text = "The character speaks up when the player finishes a job for a shop that trades anyway. Off: only told silently.",
-        DefaultValue = false,
-    };
 
-    public static readonly FormBooleanField AnnouncePursuedDone = new()
-    {
-        Name = "AnnouncePursuedDone",
-        Label = "Announce Handed-In Pursued Mission",
-        Text = "The character speaks up when the mission it was keeping track of (empyrion_pursue_quest) is handed in, " +
-               "whatever its kind. Off: only told silently.",
-        DefaultValue = true,
-    };
 
-    public static readonly FormBooleanField AnnounceItemsReady = new()
-    {
-        Name = "AnnounceItemsReady",
-        Label = "Announce Pursued Mission Items Ready",
-        Text = "The character speaks up when the player carries everything the pursued mission wants (personal inventory). Off: only told silently.",
-        DefaultValue = true,
-    };
+
+
 
     public static readonly FormTextField VcSuffix = new()
     {
@@ -187,6 +148,17 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         Max = 60,
     };
 
+    public static readonly FormIntField MaxWatches = new()
+    {
+        Name = "MaxWatches",
+        Label = "Maximum Watches",
+        Text = "How many watches ('tell me when …') the character may keep per game server. More only make the list longer; " +
+               "lowering it never deletes any, it only stops adding new ones.",
+        DefaultValue = 20,
+        Min = 1,
+        Max = 1000,
+    };
+
     public static readonly FormIntField ReactionCooldownSeconds = new()
     {
         Name = "ReactionCooldownSeconds",
@@ -217,17 +189,14 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
             GameChatMirror,
             PollSeconds,
             ReactionCooldownSeconds,
+            MaxWatches,
             VcSuffix,
             ChatToolSettingsContributions.GetFormFields(Tools, AutoEnabledFor),
             // last: a title starts a section that runs to the next title, and the tool fields have none of their own
-            AnnouncementsTitle,
-            AnnounceFactoryMissions,
-            AnnounceTraderMissions,
-            AnnounceDoneFactoryMissions,
-            AnnounceDoneTraderMissions,
-            AnnouncePursuedDone,
-            AnnounceItemsReady
+            GameEventsTitle
         );
+        // the game event dropdowns and the vitals/tanks table close the folded section (FormBuilder.Build takes no arrays)
+        fields = [.. fields, .. GameEventSettings.EventFields, VitalsTitle, GameEventSettings.LevelsField];
         return Task.FromResult(fields);
     }
 }

@@ -35,14 +35,14 @@ namespace VoxtaBridge
         {
             var f = Form.Parse(body);
             var action = (f.Get("action") ?? "list").Trim().ToLowerInvariant();
-            if (action != "list" && action != "find" && !DeviceWriteActions.Contains(action))
-                return (400, Error("'action' must be list, find, control, signal, device, power, shield, lcd, teleporter or tank."));
-            var writes = action != "list" && action != "find" && !(action == "lcd" && f.Get("text") == null)
+            if (action != "list" && action != "find" && action != "states" && !DeviceWriteActions.Contains(action))
+                return (400, Error("'action' must be list, find, states, control, signal, device, power, shield, lcd, teleporter or tank."));
+            var writes = action != "list" && action != "find" && action != "states" && !(action == "lcd" && f.Get("text") == null)
                          && !(action == "teleporter" && f.Get("target") == null && f.Get("targetPlayfield") == null && f.Get("targetSystem") == null);
             if (writes && !config.DeviceControlEnabled) return (403, Error("Device control is switched off on this server (DeviceControlEnabled=false)."));
             if (action == "teleporter" && writes && !config.DevWriteTools)
                 return (403, Error("Setting teleporter targets is a development tool (it ignores the game's range and reputation rules) and is switched off (DevWriteTools=false)."));
-            var keys = new[] { "structure", "name", "state", "text", "target", "targetPlayfield", "targetSystem", "tank", "direction", "item", "amount", "container", "query", "changes" };
+            var keys = new[] { "structure", "name", "state", "text", "target", "targetPlayfield", "targetSystem", "tank", "direction", "item", "amount", "container", "query", "changes", "names" };
             var fields = keys.Where(k => f.Get(k) != null).Select(k => (k, f.Get(k))).ToList();
             fields.Add(("action", action));
             fields.Add(("max", config.MaxItemsPerTransfer.ToString(CultureInfo.InvariantCulture)));
@@ -78,6 +78,7 @@ namespace VoxtaBridge
             {
                 case "list": return DevicesList(s);
                 case "control": return DevicesControl(s, player, req.Get("changes"));
+                case "states": return DevicesStates(s, req.Get("names"));
                 case "signal": return DevicesSignal(s, player, name, state);
                 case "device": return DevicesSwitch(s, name, state);
                 case "power": return DevicesPower(s, player, state);

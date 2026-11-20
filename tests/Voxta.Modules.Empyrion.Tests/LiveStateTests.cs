@@ -152,8 +152,18 @@ public class LiveStateTests
         var c = w.Apply(aboard, t.AddSeconds(4));
 
         Assert.True(b!.InShip);
-        Assert.DoesNotContain(GameEvents.Diff(a, b).Concat(GameEvents.Diff(b, c)), e => e.Name is "LeftShip" or "BoardedShip" or "ChangedShip");
+        Assert.DoesNotContain(GameEvents.Diff(a, b).Concat(GameEvents.Diff(b, c)), e => e.Name is "LeftStructure" or "EnteredStructure" or "ChangedShip");
         Assert.Contains(GameEvents.Diff(a, b), e => e.Name == "LeftPilotSeat");
+    }
+
+    [Fact]
+    public void Shield_down_is_reported_but_not_when_docking()
+    {
+        var shielded = Base with { ShieldActive = true };
+        Assert.Contains(GameEvents.Diff(shielded, shielded with { ShieldActive = false }), e => e.Name == "ShieldDown");
+        Assert.DoesNotContain(GameEvents.Diff(shielded, shielded with { ShieldActive = false, DockedTo = "Test Hauler" }), e => e.Name == "ShieldDown");
+        var docked = shielded with { DockedTo = "Test Hauler" };
+        Assert.DoesNotContain(GameEvents.Diff(docked, docked with { ShieldActive = false }), e => e.Name == "ShieldDown");
     }
 
     [Fact]
@@ -168,10 +178,10 @@ public class LiveStateTests
         var left = Assert.Single(GameEvents.Diff(piloting, standingInIt));
         Assert.Equal("LeftPilotSeat", left.Name);
         Assert.False(left.Important);
-        Assert.Equal("Left the pilot seat of the SV 'Test Corvette', still aboard.", left.Description);
+        Assert.Equal("Left the pilot seat of the small vessel (SV) 'Test Corvette', still aboard.", left.Description);
         var took = Assert.Single(GameEvents.Diff(standingInIt, seatedAgain));
         Assert.Equal("TookControls", took.Name);
-        Assert.Equal("Took the controls of the SV 'Test Corvette'.", took.Description);
+        Assert.Equal("Took the controls of the small vessel (SV) 'Test Corvette'.", took.Description);
     }
 
     [Fact]
@@ -185,7 +195,7 @@ public class LiveStateTests
 
         Assert.True(b!.InShip);
         Assert.False(c!.InShip);
-        Assert.Equal("LeftShip", Assert.Single(GameEvents.Diff(b, c), e => e.Name is "LeftShip" or "BoardedShip").Name);
+        Assert.Equal("LeftStructure", Assert.Single(GameEvents.Diff(b, c), e => e.Name is "LeftStructure" or "EnteredStructure").Name);
     }
 
     [Fact]
@@ -223,8 +233,8 @@ public class LiveStateTests
         var low = Base with { Oxygen = 140 };      // 23%
         var critical = Base with { Oxygen = 50 };  // 8%
 
-        Assert.Equal("LowOxygen", Assert.Single(GameEvents.Diff(Base, low)).Name);
-        Assert.Equal("CriticalOxygen", Assert.Single(GameEvents.Diff(low, critical)).Name);
+        Assert.Equal("suit_oxygen_warning", Assert.Single(GameEvents.Diff(Base, low)).Id);
+        Assert.Equal("suit_oxygen_low", Assert.Single(GameEvents.Diff(low, critical)).Id);
         Assert.Empty(GameEvents.Diff(critical, critical with { Oxygen = 40 }));
     }
 
@@ -234,10 +244,19 @@ public class LiveStateTests
         var low = Base with { ShipFuel = 250 };    // 12.5%
         var empty = Base with { ShipFuel = 0 };
 
-        var lowEvent = Assert.Single(GameEvents.Diff(Base, low));
-        Assert.Equal("LowFuel", lowEvent.Name);
+        var lowEvent = Assert.Single(GameEvents.Diff(Base, low)); // crosses warning and low at once: the most severe wins
+        Assert.Equal("fuel_low", lowEvent.Id);
         Assert.True(lowEvent.Important);
-        Assert.Equal("FuelEmpty", Assert.Single(GameEvents.Diff(low, empty)).Name);
+        Assert.Equal("fuel_empty", Assert.Single(GameEvents.Diff(low, empty)).Id);
+    }
+
+    [Fact]
+    public void Player_status_shows_stats_as_percent()
+    {
+        var text = View().PlayerStatus();
+        Assert.Contains("Health 100%, suit oxygen 75%, food 96%.", text);
+        Assert.DoesNotContain("radiation", text);
+        Assert.DoesNotContain("450", text);
     }
 
     [Fact]
@@ -246,9 +265,9 @@ public class LiveStateTests
         var onFoot = Base with { ShipName = null, ShipType = null, IsPilot = false };
 
         var left = Assert.Single(GameEvents.Diff(Base, onFoot));
-        Assert.Equal("LeftShip", left.Name);
+        Assert.Equal("LeftStructure", left.Name);
         Assert.False(left.Important);
-        Assert.Equal("BoardedShip", Assert.Single(GameEvents.Diff(onFoot, Base)).Name);
+        Assert.Equal("EnteredStructure", Assert.Single(GameEvents.Diff(onFoot, Base)).Name);
     }
 
     [Fact]
@@ -256,8 +275,52 @@ public class LiveStateTests
     {
         var otherShip = Base with { ShipName = "Hauler", ShipFuel = 10 };
 
-        var e = Assert.Single(GameEvents.Diff(Base, otherShip));
-        Assert.Equal("ChangedShip", e.Name);
+        Assert.Equal(["left_structure", "entered_structure"], GameEvents.Diff(Base, otherShip).Select(e => e.Id));
+    }
+
+    [Fact]
+    public void A_level_switched_off_falls_through_to_the_next()
+    {
+        var low = Base with { ShipFuel = 250 }; // 12.5%: crosses warning and low
+        var cfg = NewMissionTests.Cfg();
+        var noLow = GameEventConfig.From(_ => null, [new Dictionary<string, string> { ["id"] = "fuel", ["low_mode"] = "off" }]);
+        Assert.Equal("fuel_low", Assert.Single(GameEvents.Diff(Base, low, config: cfg)).Id);
+        Assert.Equal("fuel_warning", Assert.Single(GameEvents.Diff(Base, low, config: noLow)).Id);
+        var silent = GameEventConfig.From(_ => null, [new Dictionary<string, string> { ["id"] = "fuel", ["low_mode"] = "silent" }]);
+        Assert.False(Assert.Single(GameEvents.Diff(Base, low, config: silent)).Important);
+    }
+
+    [Fact]
+    public void Thresholds_come_from_the_table()
+    {
+        var cfg = GameEventConfig.From(_ => null, [new Dictionary<string, string> { ["id"] = "health", ["low"] = "50", ["warning_mode"] = "off" }]);
+        var half = Base with { Health = (Base.HealthMax ?? 100) * 0.45 };
+        Assert.Equal("health_low", Assert.Single(GameEvents.Diff(Base, half, config: cfg)).Id);
+        Assert.Empty(GameEvents.Diff(Base, half with { Health = (Base.HealthMax ?? 100) * 0.6 }, config: cfg));
+    }
+
+    [Fact]
+    public void Health_empty_is_death_and_ship_oxygen_empty_means_suit_oxygen()
+    {
+        var dead = Assert.Single(GameEvents.Diff(Base with { Health = 5 }, Base with { Health = 0 }));
+        Assert.Equal("health_empty", dead.Id);
+        Assert.Equal("Player1 died.", dead.Description);
+        var o2 = Assert.Single(GameEvents.Diff(Base with { ShipOxygen = 10 }, Base with { ShipOxygen = 0 }));
+        Assert.Equal("ship_oxygen_empty", o2.Id);
+        Assert.True(o2.Important);
+        Assert.Contains("breathing from the suit's oxygen now", o2.Description);
+        Assert.Empty(GameEvents.Diff(Base with { ShipOxygen = 0 }, Base with { ShipOxygen = 0 }));
+    }
+
+    [Fact]
+    public void Predefined_events_are_hidden_watches_with_negative_ids()
+    {
+        var cfg = NewMissionTests.Cfg(("player_left", "off"));
+        Assert.All(cfg.HiddenWatches, w => { Assert.True(w.Hidden); Assert.True(w.Id < 0); });
+        Assert.DoesNotContain(cfg.HiddenWatches, w => w.ConditionText == "event=player_left");
+        Assert.False(cfg.HiddenWatches.Single(w => w.ConditionText == "event=entered_structure").Announce);
+        Assert.True(cfg.HiddenWatches.Single(w => w.ConditionText == "event=shield_down").Announce);
+        Assert.Empty(GameEvents.Diff(Base, null, config: cfg));
     }
 
     [Fact]
@@ -355,7 +418,7 @@ public class StandingTests
         var onFoot = Inside with { ShipName = null, ShipType = null };
         var outside = Inside with { Standing = true };
         Assert.Empty(GameEvents.Diff(onFoot, outside));
-        Assert.Equal("BoardedShip", Assert.Single(GameEvents.Diff(outside, Inside)).Name);
-        Assert.Equal("LeftShip", Assert.Single(GameEvents.Diff(Inside, outside)).Name);
+        Assert.Equal("EnteredStructure", Assert.Single(GameEvents.Diff(outside, Inside)).Name);
+        Assert.Equal("LeftStructure", Assert.Single(GameEvents.Diff(Inside, outside)).Name);
     }
 }

@@ -158,7 +158,12 @@ public sealed class GameView
         var src = _api1Player ?? _pfPlayer;
         if (src is { } p)
         {
-            sb.AppendLine($"Health {Num(p, "health")}, oxygen {Num(p, "oxygen")}, food {Num(p, "food")}.");
+            // always percent (the live context uses percent too; absolute game values confuse the model)
+            string? Pct(string key) =>
+                GameState.Percent(Double(p, key), Double(p, key + "Max")) is { } v ? $"{key switch { "oxygen" => "suit oxygen", _ => key }} {v:0}%" : null;
+            // radiation and body temperature: later, they need more than a percentage (WP6)
+            var stats = new[] { "health", "oxygen", "food", "stamina" }.Select(Pct).Where(x => x != null).ToList();
+            if (stats.Count > 0) sb.AppendLine(char.ToUpperInvariant(stats[0]![0]) + string.Join(", ", stats)[1..] + ".");
             if (_api1Player is { } a)
                 sb.AppendLine($"Credits {Num(a, "credits")}. Inventory: {Num(a, "bagStacks")} stacks in the bag, {Num(a, "toolbarStacks")} on the toolbar (item names: {EmpyrionConstants.GetPlayerInventoryTool}).");
         }
@@ -205,16 +210,31 @@ public sealed class GameView
     }
 
     /// <summary>Type, name, size, pilot, power, shield and tanks of a structure.</summary>
+    /// <summary>"70% (21,900 of 31,147 points)" like the tanks; without the maximum (unverified game build) only the points.</summary>
+    private static string ShieldAmount(JsonElement s)
+    {
+        var level = Math.Round(Double(s, "shield") ?? 0);
+        string N(double v) => v.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        return Double(s, "shieldCapacity") is { } cap and > 0
+            ? $"{Math.Clamp(level / cap * 100, 0, 100):0}% ({N(level)} of {N(cap)} points)"
+            : $"{N(level)} points";
+    }
+
     private static void RenderStructureCore(StringBuilder sb, JsonElement s)
     {
         sb.AppendLine($"{Str(s, "type")} '{Str(s, "name")}' (size class {Num(s, "sizeClass")}, {Num(s, "blocks")} blocks, mass {Num(s, "mass")} kg).");
         sb.AppendLine($"Pilot: {Str(s, "pilot") ?? "nobody"}. Power: {(Bool(s, "powered") == true ? "on" : "off")}. " +
-                      $"Shield: {(Bool(s, "shieldActive") == true ? $"active, {Num(s, "shield")}" : "inactive")}.");
+                      $"Shield: {(Bool(s, "shieldActive") == true ? "active, " : "inactive, ")}{ShieldAmount(s)}.");
         foreach (var tank in new[] { "fuel", "oxygen", "pentaxid" })
         {
             if (!s.TryGetProperty(tank, out var t) || t.ValueKind != JsonValueKind.Object) continue;
-            var pct = Double(t, "capacity") is { } cap and > 0 && Double(t, "content") is { } c ? $"{Math.Clamp(c / cap * 100, 0, 100):0}% (" : "";
-            sb.AppendLine($"{char.ToUpperInvariant(tank[0])}{tank[1..]} tank: {pct}{Math.Round(Double(t, "content") ?? 0):0} / {Math.Round(Double(t, "capacity") ?? 0):0}{(pct.Length > 0 ? ")" : "")}.");
+            // percent first, the amounts clearly as units (never a bare number next to percent values)
+            var content = Math.Round(Double(t, "content") ?? 0);
+            var capacity = Math.Round(Double(t, "capacity") ?? 0);
+            var amounts = $"{content.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} of " +
+                          $"{capacity.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} units";
+            sb.AppendLine($"{char.ToUpperInvariant(tank[0])}{tank[1..]} tank: " +
+                          (capacity > 0 ? $"{Math.Clamp(content / capacity * 100, 0, 100):0}% ({amounts})." : $"{amounts}."));
         }
     }
 
@@ -315,7 +335,7 @@ public sealed class GameView
 
     /// <summary>
     /// "Structures in reach" as a tree: the docking group (carrier → docked ships; Empyrion has no chain docking),
-    /// then own structures in transfer range (bases never have anything docked).
+    /// then own structures in transfer range (with what is docked to them, e.g. SVs and HVs at a base).
     /// </summary>
     private static void RenderReach(StringBuilder sb, JsonElement s)
     {
@@ -1090,6 +1110,13 @@ public sealed class GameView
             ShipPentaxid = Get(Tank("pentaxid"), "content"), ShipPentaxidMax = Get(Tank("pentaxid"), "capacity"),
             ShieldActive = s is { } s3 ? Bool(s3, "shieldActive") : null,
             Powered = s is { } s4 ? Bool(s4, "powered") : null,
+            // docked/landed describe the ship the player is on, so only when that is the structure sent
+            DockedTo = PlayerOnActive && s is { } sDock && Str(sDock, "name") == shipName ? Str(sDock, "dockedTo") : null,
+            NewStructures = _pfPlayer is { } pfn
+                ? Array(pfn, "newStructures").Select(n => new NewStructure((int)(Double(n, "id") ?? 0), Str(n, "name") ?? "", Str(n, "type") ?? "",
+                    Str(n, "kind") ?? "", Str(n, "blueprint"))).ToList()
+                : [],
+            Landed = PlayerOnActive && s is { } sLand && Str(sLand, "name") == shipName ? Bool(sLand, "landed") : null,
             VisitingName = visiting is { } v1 ? Str(v1, "name") : null,
             VisitingType = visiting is { } v2 ? Str(v2, "type") : null,
             VisitingOwner = visiting is { } v3 ? Str(v3, "owner") : null,

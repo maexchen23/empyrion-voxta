@@ -12,12 +12,13 @@ Tested with the **Reforged Eden 2** scenario; most features also work with vanil
 
 The included character **IDA** (see below) at work:
 
-| "Get me 20 mags for my minigun." | "Craft twenty more." | "I docked the miner, unload it." |
+| "Get me 20 mags for my minigun." | "I brought in the miner, supply her." | "When I walk off the miner, turn her power off …" |
 |---|---|---|
-| ![Ammo for the laser minigun moved into the player's bag](docs/screenshots/ammo-for-the-minigun.png) | ![Charges crafted from the production container and stored](docs/screenshots/craft-and-store.png) | ![A docked miner's ore moved into the right containers](docs/screenshots/unload-the-miner.png) |
+| ![Ammo for the laser minigun moved into the player's bag](docs/screenshots/ammo-for-the-minigun.png) | ![Supplying a freshly spawned miner: ammo, then fuel, oxygen and pentaxid tanks to half](docs/screenshots/supply-the-new-miner.png) | ![Two watches switch the miner's power as the player moves between the ships](docs/screenshots/power-the-miner-by-watch.png) |
 
-She looks up the right ammo for the weapon you carry, crafts from your ship's production container, and sorts cargo
-into the containers where it belongs, all through the bridge.
+She looks up the right ammo for the weapon you carry, supplies a new ship from your carrier (cargo and tanks), and
+switches your ships on her own when you set a watch, all through the bridge. More in the
+[showcase](docs/showcase.md): crafting, unloading a miner, changing a watch.
 
 ## What the character can do
 
@@ -32,14 +33,22 @@ into the containers where it belongs, all through the bridge.
 - **Points of interest**: what is around, faction standing, turrets, which places are dangerous, info terminals,
   planet descriptions.
 - **Trader missions**: remembers the missions factories and shops gave you (the game doesn't track them), what they
-  want, rewards and work orders; keeps one you pursue in view, counts its items in your inventory and says when you
-  can hand it in.
+  want, rewards and work orders; keeps one you pursue in view and counts its items in your inventory.
 - **Galaxy map**: marks systems (also as a numbered warp route), adds markers you keep.
 - **Micro jump**: short jumps of the ship you fly, paid with Refined Pentaxid from the ship's pentaxid tank.
+- **Ship control**: switches main power, the shield, signals (control panel and switches) and named devices or device
+  groups on your own ships and bases, several at once (e.g. a "parking mode"); finds them by name without listing
+  everything. Devices need a custom name or a device group.
+- **Watches**: "tell me when …": she can watch for you entering or leaving a ship or base, taking or leaving the pilot
+  seat, docking, landing, a signal or device changing, or a new ship or base appearing, and act on it as you asked
+  (e.g. power the miner down when you leave it docked). They are kept per game server and survive restarts.
 - **Game chat**: whisper to yourself in the game's chat to talk to the character (nobody else sees it); she can put
   details like item counts into your chat, and optionally mirror all her replies there (for playing without voice).
-- **Reacts** to events: arriving somewhere, low oxygen or food, shield down, fuel low, new or completed missions
-  (which ones it speaks about is set in the module's settings).
+- **Reacts** to game events: arriving somewhere, health, suit oxygen and food running low (or the player dying), ship
+  tanks running low or out, shield down, a new ship or base from a blueprint or a starter block, new or completed
+  missions, a finished blueprint. In the module's settings each event is on (she reacts), silent (she's only told)
+  or off ("Game Events"), and vitals and tanks have three levels each with their own thresholds ("Vitals and
+  Tanks").
 
 It can't fly, fight or build for you, and it only knows what you could see in the game yourself (no peeking into
 unexplored systems).

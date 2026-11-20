@@ -37,6 +37,7 @@ public static class EmpyrionConstants
     public const string MicroJumpTool = "empyrion_microjump";
     public const string FindShipControlsTool = "empyrion_find_ship_controls";
     public const string ShipControlTool = "empyrion_ship_control";
+    public const string WatchTool = "empyrion_watch";
 
     public static readonly AugmentationKeyDescriptor[] Augmentations =
     [

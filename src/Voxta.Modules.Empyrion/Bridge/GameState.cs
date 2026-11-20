@@ -10,6 +10,9 @@ public sealed record MissionNeed(string Item, string Name, int Count, int? Token
 public sealed record OpenMission(string Key, string Kind, string Line, string? Where = null, bool FollowUp = false, bool Pursued = false,
     IReadOnlyList<MissionNeed>? Needs = null);
 
+/// <summary>A ship or base that just came into being: kind "blueprint" (spawned from one) or "starter" (starter block placed).</summary>
+public sealed record NewStructure(int Id, string Name, string Type, string Kind, string? Blueprint);
+
 /// <summary>Compact game state of one player, taken from one bridge poll.</summary>
 public sealed record GameState
 {
@@ -45,6 +48,12 @@ public sealed record GameState
     public double? ShipPentaxidMax { get; init; }
     public bool? ShieldActive { get; init; }
     public bool? Powered { get; init; }
+    /// <summary>The structure the ship is docked to (only while the player is on the ship), or null.</summary>
+    public string? DockedTo { get; init; }
+    /// <summary>Any landing gear extended (only while the player is on the ship); null = unknown or no landing gear.</summary>
+    public bool? Landed { get; init; }
+    /// <summary>Own (or faction) ships and bases created in the last minute (the bridge keeps each for 60 s).</summary>
+    public IReadOnlyList<NewStructure> NewStructures { get; init; } = [];
 
     /// <summary>
     /// The own structure the item features work from when the player isn't on it (on foot, or set to another one):
@@ -95,7 +104,6 @@ public sealed record GameState
         if (Percent(Health, HealthMax) is { } h) vitals.Add($"health {h:0}%");
         if (Percent(Oxygen, OxygenMax) is { } o) vitals.Add($"suit oxygen {o:0}%");
         if (Percent(Food, FoodMax) is { } f) vitals.Add($"food {f:0}%");
-        if (Percent(Radiation, RadiationMax) is { } r && r >= 1) vitals.Add($"radiation {r:0}%");
         if (vitals.Count > 0) sb.AppendLine("Player: " + string.Join(", ", vitals));
 
         string Status()

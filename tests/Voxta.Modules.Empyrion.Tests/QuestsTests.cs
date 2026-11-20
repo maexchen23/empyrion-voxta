@@ -51,10 +51,14 @@ public class NewMissionTests
     static readonly OpenMission Factory = new("100148-1/2/3-Viunean#1", "factory", "Solaris-AMP Factory (Viunean) wants 12 Communication Equipment to unlock its trades");
     static readonly OpenMission Shop = new("100200-1/2/3-Viunean#2", "trader", "Market Cafe (Viunean) wants 3 Space Durian");
 
+    /// <summary>Settings with the given event modes (id → on/silent/off), the rest default.</summary>
+    internal static GameEventConfig Cfg(params (string id, string mode)[] modes) =>
+        GameEventConfig.From(id => modes.Where(m => m.id == id).Select(m => m.mode).FirstOrDefault(), null);
+
     [Fact]
     public void New_factory_mission_is_spoken_trader_mission_silent_by_default()
     {
-        var events = GameEvents.Diff(S(), S(Factory, Shop), announce: new MissionAnnounce(NewFactory: true, NewTrader: false));
+        var events = GameEvents.Diff(S(), S(Factory, Shop));
         Assert.Equal(2, events.Count);
         Assert.True(events.Single(e => e.Name == "NewFactoryMission").Important);
         Assert.False(events.Single(e => e.Name == "NewTraderMission").Important);
@@ -63,10 +67,13 @@ public class NewMissionTests
     [Fact]
     public void Settings_switch_both_ways()
     {
-        var none = GameEvents.Diff(S(), S(Factory, Shop), announce: new MissionAnnounce(NewFactory: false, NewTrader: false));
+        var none = GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "silent"), ("new_trader_mission", "silent")));
+        Assert.Equal(2, none.Count);
         Assert.All(none, e => Assert.False(e.Important));
-        var all = GameEvents.Diff(S(), S(Factory, Shop), announce: new MissionAnnounce(NewFactory: true, NewTrader: true));
+        var all = GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "on"), ("new_trader_mission", "on")));
         Assert.All(all, e => Assert.True(e.Important));
+        var off = GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "off")));
+        Assert.Equal("NewTraderMission", Assert.Single(off).Name);
     }
 
     [Fact]
@@ -91,8 +98,8 @@ public class NewMissionTests
         var shop = Assert.Single(GameEvents.Diff(S(Shop), S()));
         Assert.Equal("TraderMissionDone", shop.Name);
         Assert.False(shop.Important);
-        Assert.True(Assert.Single(GameEvents.Diff(S(Shop), S(), announce: new MissionAnnounce(DoneTrader: true))).Important);
-        Assert.False(Assert.Single(GameEvents.Diff(S(f), S(), announce: new MissionAnnounce(DoneFactory: false))).Important);
+        Assert.True(Assert.Single(GameEvents.Diff(S(Shop), S(), config: Cfg(("trader_mission_done", "on")))).Important);
+        Assert.False(Assert.Single(GameEvents.Diff(S(f), S(), config: Cfg(("factory_mission_done", "silent")))).Important);
         Assert.Empty(GameEvents.Diff(S(f with { Pursued = true }), S())); // the pursued one has PursuedMissionDone
     }
 
@@ -102,24 +109,27 @@ public class NewMissionTests
         var open = new GameState { Player = "Player1", Playfield = "Viunean", PursuingLine = "x", PursuingStatus = "open" };
         var done = open with { PursuingStatus = "done" };
         Assert.True(Assert.Single(GameEvents.Diff(open, done)).Important);
-        Assert.False(Assert.Single(GameEvents.Diff(open, done, announce: new MissionAnnounce(PursuedDone: false))).Important);
+        Assert.False(Assert.Single(GameEvents.Diff(open, done, config: Cfg(("pursued_mission_done", "silent")))).Important);
+        Assert.Empty(GameEvents.Diff(open, done, config: Cfg(("pursued_mission_done", "off"))));
     }
 }
 
 public class SettingsFormTests
 {
     [Fact]
-    public async Task Announcement_toggles_sit_in_their_own_folded_section()
+    public async Task Game_events_and_vitals_sit_in_their_own_folded_sections()
     {
         var fields = await new Voxta.Modules.Empyrion.Configuration.ModuleConfigurationProvider()
             .GetModuleConfigurationFieldsAsync(null!, null!, CancellationToken.None);
         var list = fields.ToList();
-        var title = list.FindIndex(f => f is Voxta.Model.Shared.Forms.FormTitleField t && t.Advanced);
-        Assert.True(title > 0);
-        var section = list.Skip(title + 1).TakeWhile(f => f is not Voxta.Model.Shared.Forms.FormTitleField).Select(f => f.Name).ToList();
-        Assert.Equal(["AnnounceFactoryMissions", "AnnounceTraderMissions", "AnnounceDoneFactoryMissions", "AnnounceDoneTraderMissions", "AnnouncePursuedDone", "AnnounceItemsReady"], section);
-        Assert.Contains("VcSuffix", list.Take(title).Select(f => f.Name));
-        Assert.Contains("Tools", list.Take(title).Select(f => f.Name));
+        var titles = list.Select((f, i) => (f, i)).Where(x => x.f is Voxta.Model.Shared.Forms.FormTitleField t && t.Advanced).Select(x => x.i).ToList();
+        Assert.Equal(2, titles.Count);
+        var events = list.Skip(titles[0] + 1).TakeWhile(f => f is not Voxta.Model.Shared.Forms.FormTitleField).Select(f => f.Name).ToList();
+        Assert.Equal(Voxta.Modules.Empyrion.Configuration.GameEventSettings.Definitions.Select(d => "Event_" + d.Id), events);
+        Assert.DoesNotContain("Event_player_died", events);
+        Assert.Equal(["GameEventLevels"], list.Skip(titles[1] + 1).Select(f => f.Name));
+        Assert.Contains("VcSuffix", list.Take(titles[0]).Select(f => f.Name));
+        Assert.Contains("Tools", list.Take(titles[0]).Select(f => f.Name));
     }
 }
 
@@ -139,11 +149,8 @@ public class PursuedProgressTests
     {
         Assert.Contains("(in the player's inventory: 8/12 Communication Equipment)", S(8).ToContext());
         Assert.Contains("ready to hand in", S(12).ToContext());
-        var e = Assert.Single(GameEvents.Diff(S(8), S(12)));
-        Assert.Equal("PursuedItemsReady", e.Name);
-        Assert.True(e.Important);
-        Assert.Empty(GameEvents.Diff(S(12), S(14)));
-        Assert.False(Assert.Single(GameEvents.Diff(S(8), S(12), announce: new MissionAnnounce(ItemsReady: false))).Important);
+        // "items ready" is no event any more (needs a ship scan; open task), only the context shows it
+        Assert.Empty(GameEvents.Diff(S(8), S(12)));
     }
 
     [Fact]

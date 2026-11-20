@@ -1,3 +1,5 @@
+using Voxta.Modules.Empyrion.Configuration;
+
 namespace Voxta.Modules.Empyrion.Bridge;
 
 /// <summary>Something that happened between two polls.</summary>
@@ -5,14 +7,8 @@ namespace Voxta.Modules.Empyrion.Bridge;
 /// <param name="Description">What happened, written for the character.</param>
 /// <param name="Important">True: the character should react out loud. False: it only needs to know.</param>
 /// <param name="MissionKey">For new-mission events: the mission, so the description can be completed (what is in reach).</param>
-public sealed record GameEvent(string Name, string Description, bool Important, string? MissionKey = null);
-
-/// <summary>
-/// Which trader mission events the character speaks up about (module settings); the others are passed on silently.
-/// "Factory": the trader's trades wait for the mission (incl. its follow-ups); "trader": a shop that trades anyway.
-/// </summary>
-public sealed record MissionAnnounce(bool NewFactory = true, bool NewTrader = false, bool DoneFactory = true, bool DoneTrader = false, bool PursuedDone = true,
-    bool ItemsReady = true);
+/// <param name="Id">The settings id (e.g. <c>fuel_low</c>) the hidden watches match on.</param>
+public sealed record GameEvent(string Name, string Description, bool Important, string? MissionKey = null, string? Id = null);
 
 /// <summary>
 /// Smooths over two gaps in the game's "which ship is the player in":
@@ -51,6 +47,7 @@ public sealed class WarpSmoother
             ShipName = held.ShipName, ShipType = held.ShipType, IsPilot = held.IsPilot,
             ShipFuel = held.ShipFuel, ShipFuelMax = held.ShipFuelMax, ShipOxygen = held.ShipOxygen, ShipOxygenMax = held.ShipOxygenMax,
             ShipPentaxid = held.ShipPentaxid, ShipPentaxidMax = held.ShipPentaxidMax, ShieldActive = held.ShieldActive, Powered = held.Powered,
+            DockedTo = held.DockedTo, Landed = held.Landed,
         };
     }
 
@@ -59,30 +56,34 @@ public sealed class WarpSmoother
 
 /// <summary>
 /// Compares two polls and names what changed. Only crossings count (a tank that was already empty when
-/// the chat started is not an event), so the character is not told the same thing every poll.
+/// the chat started is not an event), so the character is not told the same thing every poll. Every event carries its
+/// settings id; <see cref="GameEventConfig.Apply"/> (the hidden watches) decides announced, silent or dropped.
 /// </summary>
 public static class GameEvents
 {
-    public const double LowVitalPercent = 25;
-    public const double CriticalVitalPercent = 10;
-    public const double LowTankPercent = 15;
-
     /// <param name="prev">State of the previous poll; null when the player was offline or this is the first poll.</param>
     /// <param name="next">State now; null when the player is offline.</param>
     /// <param name="firstPoll">True for the first poll of a chat: nothing is reported, the context covers it.</param>
-    public static List<GameEvent> Diff(GameState? prev, GameState? next, bool firstPoll = false, MissionAnnounce? announce = null)
+    /// <param name="config">Modes and thresholds from the settings; null = defaults.</param>
+    public static List<GameEvent> Diff(GameState? prev, GameState? next, bool firstPoll = false, GameEventConfig? config = null)
+    {
+        config ??= GameEventConfig.Default;
+        return config.Apply(Raw(prev, next, firstPoll, config));
+    }
+
+    private static List<GameEvent> Raw(GameState? prev, GameState? next, bool firstPoll, GameEventConfig config)
     {
         var events = new List<GameEvent>();
         if (firstPoll) return events;
 
         if (prev == null && next != null)
         {
-            events.Add(new("PlayerJoined", $"{next.Player} joined the game, on {next.Playfield}.", true));
+            events.Add(new("PlayerJoined", $"{next.Player} joined the game, on {next.Playfield}.", true, Id: "player_joined"));
             return events;
         }
         if (prev != null && next == null)
         {
-            events.Add(new("PlayerLeft", $"{prev.Player} left the game.", false));
+            events.Add(new("PlayerLeft", $"{prev.Player} left the game.", false, Id: "player_left"));
             return events;
         }
         if (prev == null || next == null) return events;
@@ -95,45 +96,37 @@ public static class GameEvents
             if (next.System != null && next.System != prev.System) desc += $" in the {next.System} system";
             desc += $", coming from {prev.Playfield}.";
             if (next.Pvp == true && prev.Pvp != true) desc += " This is a PvP zone: other players can attack.";
-            events.Add(new("PlayfieldChanged", desc, true));
+            events.Add(new("PlayfieldChanged", desc, true, Id: "playfield_changed"));
         }
 
-        if (!prev.InShip && next.InShip)
-            events.Add(new("BoardedShip", $"Boarded the {next.ShipType} '{next.ShipName}'{(next.IsPilot ? " and took the controls" : "")}.", false));
-        else if (prev.InShip && !next.InShip)
-            events.Add(new("LeftShip", $"Left the {prev.ShipType} '{prev.ShipName}', now on foot.", false));
-        else if (prev.InShip && next.InShip && prev.ShipName != next.ShipName)
-            events.Add(new("ChangedShip", $"Moved from '{prev.ShipName}' to the {next.ShipType} '{next.ShipName}'.", false));
-        else if (prev.InShip && next.InShip && !prev.IsPilot && next.IsPilot)
-            events.Add(new("TookControls", $"Took the controls of the {next.ShipType} '{next.ShipName}'.", false));
-        else if (prev.InShip && next.InShip && prev.IsPilot && !next.IsPilot)
-            events.Add(new("LeftPilotSeat", $"Left the pilot seat of the {next.ShipType} '{next.ShipName}', still aboard.", false));
+        var sameShip = prev.InShip && next.InShip && prev.ShipName == next.ShipName;
+        if (prev.InShip && !sameShip)
+            events.Add(new("LeftStructure", $"Left the {TypeWord(prev.ShipType)} '{prev.ShipName}'{(next.InShip ? "" : ", now on foot")}.", false, Id: "left_structure"));
+        if (next.InShip && !sameShip)
+            events.Add(new("EnteredStructure", $"Entered the {TypeWord(next.ShipType)} '{next.ShipName}'{(next.IsPilot ? " and took the controls" : "")}.", false, Id: "entered_structure"));
+        if (sameShip && !prev.IsPilot && next.IsPilot)
+            events.Add(new("TookControls", $"Took the controls of the {TypeWord(next.ShipType)} '{next.ShipName}'.", false, Id: "took_controls"));
+        if (sameShip && prev.IsPilot && !next.IsPilot)
+            events.Add(new("LeftPilotSeat", $"Left the pilot seat of the {TypeWord(next.ShipType)} '{next.ShipName}', still aboard.", false, Id: "left_pilot_seat"));
 
-        Vital(events, "Health", "health", prev.Health, prev.HealthMax, next.Health, next.HealthMax);
-        Vital(events, "Oxygen", "suit oxygen", prev.Oxygen, prev.OxygenMax, next.Oxygen, next.OxygenMax);
-        Vital(events, "Food", "food", prev.Food, prev.FoodMax, next.Food, next.FoodMax);
+        Level(events, config, "health", "health", null, prev.Health, prev.HealthMax, next.Health, next.HealthMax, next.Player);
+        Level(events, config, "suit_oxygen", "suit oxygen", null, prev.Oxygen, prev.OxygenMax, next.Oxygen, next.OxygenMax, next.Player);
+        Level(events, config, "food", "food", null, prev.Food, prev.FoodMax, next.Food, next.FoodMax, next.Player);
 
-        if (next.Health is <= 0 && prev.Health is > 0)
-            events.Add(new("PlayerDied", $"{next.Player} died.", true));
-
-        // Ship tanks: only while the player stays on the same ship.
-        if (prev.InShip && next.InShip && prev.ShipName == next.ShipName)
+        // Ship tanks and shield: only while the player stays on the same ship.
+        if (sameShip)
         {
-            Tank(events, "Fuel", "fuel", next.ShipName, prev.ShipFuel, prev.ShipFuelMax, next.ShipFuel, next.ShipFuelMax, important: true);
-            Tank(events, "ShipOxygen", "oxygen", next.ShipName, prev.ShipOxygen, prev.ShipOxygenMax, next.ShipOxygen, next.ShipOxygenMax, important: false);
-            Tank(events, "Pentaxid", "pentaxid", next.ShipName, prev.ShipPentaxid, prev.ShipPentaxidMax, next.ShipPentaxid, next.ShipPentaxidMax, important: false);
+            Level(events, config, "fuel", "fuel tank", next.ShipName, prev.ShipFuel, prev.ShipFuelMax, next.ShipFuel, next.ShipFuelMax, next.Player);
+            Level(events, config, "ship_oxygen", "oxygen tank", next.ShipName, prev.ShipOxygen, prev.ShipOxygenMax, next.ShipOxygen, next.ShipOxygenMax, next.Player);
+            Level(events, config, "pentaxid", "pentaxid tank", next.ShipName, prev.ShipPentaxid, prev.ShipPentaxidMax, next.ShipPentaxid, next.ShipPentaxidMax, next.Player);
 
-            if (prev.ShieldActive == true && next.ShieldActive == false)
-                events.Add(new("ShieldDown", $"The shield of '{next.ShipName}' went down.", true));
+            // the game drops a docked ship's shield: not worth a warning
+            if (prev.ShieldActive == true && next.ShieldActive == false && next.DockedTo == null)
+                events.Add(new("ShieldDown", $"The shield of '{next.ShipName}' went down.", true, Id: "shield_down"));
         }
 
-        announce ??= new MissionAnnounce();
         if (prev.PursuingLine != null && prev.PursuingStatus is "open" or "locked" && next.PursuingStatus == "done")
-            events.Add(new("PursuedMissionDone", $"The pursued trader mission is done: {next.PursuingLine}.", announce.PursuedDone));
-
-        if (!prev.PursuingReady && next.PursuingReady && prev.PursuingLine != null && prev.PursuingLine == next.PursuingLine)
-            events.Add(new("PursuedItemsReady",
-                $"The player now carries everything the pursued mission wants: {next.PursuingLine}. They can hand it in at the trader.", announce.ItemsReady));
+            events.Add(new("PursuedMissionDone", $"The pursued trader mission is done: {next.PursuingLine}.", true, Id: "pursued_mission_done"));
 
         // new trader missions: only against a known earlier list (the first list of a chat is the baseline)
         if (prev.OpenMissions is { } before && next.OpenMissions is { } now)
@@ -142,10 +135,11 @@ public static class GameEvents
             foreach (var m in now.Where(m => !known.Contains(m.Key)))
             {
                 var factory = m.Kind == "factory";
-                var speak = factory ? announce.NewFactory : announce.NewTrader;
+                var id = factory ? "new_factory_mission" : "new_trader_mission";
+                var speak = config.ModeOf(id) == GameEventSettings.On;
                 events.Add(new(factory ? "NewFactoryMission" : "NewTraderMission",
                     $"The player just got a new {(factory ? "factory" : "trader")} mission: {m.Line}." +
-                    (speak ? " Mention it briefly; empyrion_pursue_quest keeps track of it if they want." : ""), speak, m.Key));
+                    (speak ? " Mention it briefly; empyrion_pursue_quest keeps track of it if they want." : ""), speak, m.Key, id));
             }
             // gone from the open list = handed in (missions can't be dropped); the pursued one has its own event
             var open = now.Select(m => m.Key).ToHashSet();
@@ -156,40 +150,64 @@ public static class GameEvents
                 var desc = factory
                     ? $"The player completed the factory mission for {where}{(m.FollowUp ? "" : "; its trades are unlocked now")}."
                     : $"The player completed the job for {where}.";
-                events.Add(new(factory ? "FactoryMissionDone" : "TraderMissionDone", desc, factory ? announce.DoneFactory : announce.DoneTrader));
+                events.Add(new(factory ? "FactoryMissionDone" : "TraderMissionDone", desc, true,
+                    Id: factory ? "factory_mission_done" : "trader_mission_done"));
             }
+        }
+
+        // new ships and bases: each id once (the bridge lists it for a minute)
+        var knownNew = prev.NewStructures.Select(n => n.Id).ToHashSet();
+        foreach (var n in next.NewStructures.Where(n => !knownNew.Contains(n.Id)))
+        {
+            if (n.Kind == "blueprint")
+                events.Add(new("NewStructure", $"A new {TypeWord(n.Type)} '{n.Name}' was spawned from a blueprint.", true, Id: "new_structure"));
+            else
+                events.Add(new("StarterPlaced", $"A starter block for a new {TypeWord(n.Type)} was placed ('{n.Name}').", true, Id: "starter_placed"));
         }
 
         if (prev.FactoryBlueprint == next.FactoryBlueprint && next.FactoryBlueprint != null
             && prev.FactoryRemainingS is > 0 && next.FactoryRemainingS is <= 0)
-            events.Add(new("BlueprintReady", $"The factory finished '{next.FactoryBlueprint}'; it can be spawned now.", true));
+            events.Add(new("BlueprintReady", $"The factory finished '{next.FactoryBlueprint}'; it can be spawned now.", true, Id: "blueprint_ready"));
 
         return events;
     }
 
-    private static void Vital(List<GameEvent> events, string name, string label,
-        double? pv, double? pmax, double? nv, double? nmax)
+    /// <summary>"base", "capital vessel (CV)", … for an entity type BA/CV/SV/HV.</summary>
+    public static string TypeWord(string? type) => type switch
+    {
+        "BA" => "base (BA)",
+        "CV" => "capital vessel (CV)",
+        "SV" => "small vessel (SV)",
+        "HV" => "hover vessel (HV)",
+        _ => type ?? "structure",
+    };
+
+    /// <summary>
+    /// A vital or tank crossing one of its three levels downwards: the most severe enabled level crossed in this poll
+    /// fires (empty, then low, then warning); a level re-arms when the value is back above it. Health "empty" is death.
+    /// </summary>
+    private static void Level(List<GameEvent> events, GameEventConfig config, string resource, string label, string? ship,
+        double? pv, double? pmax, double? nv, double? nmax, string? player)
     {
         var before = GameState.Percent(pv, pmax);
         var now = GameState.Percent(nv, nmax);
         if (before is not { } b || now is not { } n) return;
-
-        if (b > CriticalVitalPercent && n <= CriticalVitalPercent)
-            events.Add(new($"Critical{name}", $"Critical: {label} is down to {n:0}%.", true));
-        else if (b > LowVitalPercent && n <= LowVitalPercent)
-            events.Add(new($"Low{name}", $"Warning: {label} is low, {n:0}%.", true));
-    }
-
-    private static void Tank(List<GameEvent> events, string name, string label, string? ship,
-        double? pv, double? pmax, double? nv, double? nmax, bool important)
-    {
-        var before = GameState.Percent(pv, pmax);
-        var now = GameState.Percent(nv, nmax);
-        if (before is not { } b || now is not { } n) return;
-
-        if (b > 0 && n <= 0)
-            events.Add(new($"{name}Empty", $"The {label} tank of '{ship}' is empty.", important));
-        else if (b > LowTankPercent && n <= LowTankPercent)
-            events.Add(new($"Low{name}", $"The {label} tank of '{ship}' is low, {n:0}%.", important));
+        var t = config.ThresholdsOf(resource);
+        foreach (var (level, threshold) in new[] { ("empty", t.Empty), ("low", t.Low), ("warning", t.Warning) })
+        {
+            var id = $"{resource}_{level}";
+            if (!config.Enabled(id) || !(b > threshold && n <= threshold)) continue;
+            var what = ship != null ? $"The {label} of '{ship}'" : $"The player's {label}";
+            var text = (resource, level) switch
+            {
+                ("health", "empty") when n <= 0 => $"{player} died.",
+                ("ship_oxygen", "empty") => $"The oxygen tank of '{ship}' is empty: the player is breathing from the suit's oxygen now.",
+                (_, "empty") => n <= 0 ? $"{what} is empty." : $"Critical: {what} is down to {n:0}%.",
+                (_, "low") => $"{what} is low: {n:0}%.",
+                _ => $"Warning: {what} is at {n:0}%.",
+            };
+            events.Add(new(id, text, true, Id: id));
+            return;
+        }
     }
 }

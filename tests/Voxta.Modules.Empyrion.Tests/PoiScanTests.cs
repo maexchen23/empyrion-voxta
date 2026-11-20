@@ -175,6 +175,16 @@ public class OwnStructureTests
     }
 
     [Fact]
+    public void Shield_reads_like_a_tank_when_the_maximum_is_known()
+    {
+        var text = GameView.StructureInfoResult(J("""
+            {"ok":true,"structure":{"name":"Ark","type":"CV","powered":true,"shieldActive":true,"shield":21900,"shieldCapacity":31147,
+              "distance":0,"containerCount":0,"docked":[]}}
+            """));
+        Assert.Contains("Shield: active, 70% (21,900 of 31,147 points).", text);
+    }
+
+    [Fact]
     public void Structure_details()
     {
         var text = GameView.StructureInfoResult(J("""
@@ -182,8 +192,8 @@ public class OwnStructureTests
               "fuel":{"content":800,"capacity":1000},"distance":1430,"containerCount":12,"docked":[{"name":"Hammer","type":"SV"}]}}
             """));
         Assert.Contains("CV 'Ark' (size class 5, 4200 blocks, mass 250000 kg).", text);
-        Assert.Contains("Pilot: nobody. Power: on. Shield: inactive.", text);
-        Assert.Contains("Fuel tank: 80% (800 / 1000).", text);
+        Assert.Contains("Pilot: nobody. Power: on. Shield: inactive, 0 points.", text);
+        Assert.Contains("Fuel tank: 80% (800 of 1,000 units).", text);
         Assert.Contains("Distance from the player: 1.4 km.", text);
         Assert.Contains("Docked to it: 'Hammer' (SV).", text);
         Assert.Contains("12 containers (contents: empyrion_get_current_ship with structure 'Ark'", text);

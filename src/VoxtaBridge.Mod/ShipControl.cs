@@ -129,6 +129,31 @@ namespace VoxtaBridge
             return d[a.Length, b.Length];
         }
 
+        /// <summary>
+        /// states <c>names</c> (separated by ';'): on/off of the named signals and devices/groups only (for the Voxta
+        /// module's watches; cheap, no full scan). Unknown names answer "missing".
+        /// </summary>
+        static string DevicesStates(IStructure s, string names)
+        {
+            var list = (names ?? "").Split(new[] { ';', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct().Take(50).ToList();
+            var signals = new HashSet<string>(AllSignals(s).Select(x => x.Name));
+            var j = new Json().Obj().Prop("ok", true).Prop("structure", StructName(s)).Key("states").Arr();
+            foreach (var n in list)
+            {
+                var sig = signals.FirstOrDefault(x => x == n) ?? signals.FirstOrDefault(x => string.Equals(x, n, StringComparison.OrdinalIgnoreCase));
+                string kind, state;
+                if (sig != null) { kind = "signal"; state = ControlState(new Control { Structure = s, Kind = "signal", Name = sig }); }
+                else
+                {
+                    var dev = (s.GetAllCustomDeviceNames() ?? new string[0]).FirstOrDefault(x => string.Equals(x, n, StringComparison.OrdinalIgnoreCase));
+                    if (dev != null) { kind = "device"; state = ControlState(new Control { Structure = s, Kind = "device", Name = dev }); }
+                    else { kind = null; state = "missing"; }
+                }
+                j.Obj().Prop("name", n).Prop("kind", kind).Prop("state", state).EndObj();
+            }
+            return j.EndArr().EndObj().ToString();
+        }
+
         static string DevicesControl(IStructure s, IPlayer player, string changes)
         {
             var items = (changes ?? "").Split(new[] { ';', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();

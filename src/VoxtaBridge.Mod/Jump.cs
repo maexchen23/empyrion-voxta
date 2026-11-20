@@ -210,14 +210,13 @@ namespace VoxtaBridge
 
         static readonly string[] JumpDriveBlocks = { "Eden_PrototypeMicroJumpDriveSV", "Eden_PrototypeMicroJumpDriveCV" };
 
-        // drive lookups per structure: where it was found (re-verified with one GetBlock), or "none at BlockCount N"
-        static readonly Dictionary<int, (VectorInt3? pos, int blockCount)> driveCache = new Dictionary<int, (VectorInt3?, int)>();
+        static readonly BlockFinder driveFinder = new BlockFinder();
         const long DriveScanMaxBlocks = 2_000_000; // bounding-box positions; measured 41,580 in 2 ms (a large carrier), so ~100 ms at the cap, once per ship
 
         /// <summary>
         /// Is a Prototype Micro Jump Drive (RE2, MaxCount 1) on the ship? It is not in the Container device list,
         /// so: 1) named devices (control panel names, the way RE2's own dialog finds the Pentaxid
-        /// tank), 2) a full block scan, capped and cached per structure until its block count changes. Pilot's ship = always loaded.
+        /// tank), 2) a full block scan, capped; remembered per structure (<see cref="BlockFinder"/>). Pilot's ship = always loaded.
         /// </summary>
         static string FindJumpDrive(IStructure s, out string diag)
         {
@@ -229,18 +228,16 @@ namespace VoxtaBridge
                     if (JumpDriveBlocks.Contains(kv.Value)) ids.Add(kv.Key);
             if (ids.Count == 0) { diag = "drive blocks not in the item mapping (not an RE2 scenario?)"; return null; }
 
-            int TypeAt(int x, int y, int z) { try { var bl = s.GetBlock(x, y, z); if (bl == null) return 0; bl.Get(out var t, out _, out _, out _); return t; } catch { return 0; } }
-            int sid = s.Entity?.Id ?? s.Id;
-            int blocks = 0;
-            try { blocks = s.BlockCount; } catch { }
+            string searchDiag = "";
+            var pos = driveFinder.Find(s, ids.Contains, () => SearchJumpDrive(s, ids, out searchDiag), out var how);
+            diag = how == "searched" ? searchDiag : how;
+            return pos.HasValue ? ItemName(BlockFinder.TypeAt(s, pos.Value)) : null;
+        }
 
-            // cached position still holds the drive?
-            if (driveCache.TryGetValue(sid, out var cached))
-            {
-                if (cached.pos.HasValue && ids.Contains(TypeAt(cached.pos.Value.x, cached.pos.Value.y, cached.pos.Value.z)))
-                { diag = "cached position"; return ItemName(TypeAt(cached.pos.Value.x, cached.pos.Value.y, cached.pos.Value.z)); }
-                if (!cached.pos.HasValue && cached.blockCount == blocks) { diag = $"cached: no drive (block count {blocks} unchanged)"; return null; }
-            }
+        static VectorInt3? SearchJumpDrive(IStructure s, HashSet<int> ids, out string diag)
+        {
+            diag = "";
+            int TypeAt(int x, int y, int z) => BlockFinder.TypeAt(s, new VectorInt3(x, y, z));
 
             // 1) named devices
             var named = 0;
@@ -252,11 +249,9 @@ namespace VoxtaBridge
                         named++;
                         foreach (var dy in new[] { 0, 128 })
                         {
-                            var t = TypeAt(p.x, p.y + dy, p.z);
-                            if (!ids.Contains(t)) continue;
-                            driveCache[sid] = (new VectorInt3(p.x, p.y + dy, p.z), blocks);
+                            if (!ids.Contains(TypeAt(p.x, p.y + dy, p.z))) continue;
                             diag = $"named device '{name}'" + (dy != 0 ? " (+128 y)" : "");
-                            return ItemName(t);
+                            return new VectorInt3(p.x, p.y + dy, p.z);
                         }
                     }
             }
@@ -275,14 +270,11 @@ namespace VoxtaBridge
                 for (int y = min.y; y <= max.y; y++)
                     for (int z = min.z; z <= max.z; z++)
                     {
-                        var t = TypeAt(x, y + 128, z); // bounding box has no +128 y offset, blocks do (see Inside())
-                        if (!ids.Contains(t)) continue;
-                        driveCache[sid] = (new VectorInt3(x, y + 128, z), blocks);
+                        if (!ids.Contains(TypeAt(x, y + 128, z))) continue; // bounding box has no +128 y offset, blocks do (see Inside())
                         diag += $"{named} named device position(s); block scan found it ({volume} positions, {sw.ElapsedMilliseconds} ms)";
                         Log($"drive check {s.Entity?.Name}: {diag}");
-                        return ItemName(t);
+                        return new VectorInt3(x, y + 128, z);
                     }
-            driveCache[sid] = (null, blocks);
             diag += $"{named} named device position(s), no drive; block scan {volume} positions in {sw.ElapsedMilliseconds} ms, no drive";
             Log($"drive check {s.Entity?.Name}: {diag}");
             return null;
