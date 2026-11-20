@@ -363,7 +363,8 @@ namespace VoxtaBridge
         // ----- ECF -------------------------------------------------------------------------------
 
         static readonly Regex Header = new Regex(
-            @"^\{\s*\+?(?<kind>Item|Block|Token)\s+Id:\s*(?<id>\d+)\s*,\s*Name:\s*(?<rest>.*)$",
+            // the Id is optional: newer configs (RE2: ~1500 blocks, e.g. the Prototype Micro Jump Drives) write "{ Block Name: X"
+            @"^\{\s*\+?(?<kind>Item|Block|Token)\s+(?:Id:\s*(?<id>\d+)\s*,\s*)?Name:\s*(?<rest>.*)$",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         static readonly Regex RefPart = new Regex(@"^(?<name>.*?)\s*,\s*Ref:\s*(?<ref>[^,\s]+)", RegexOptions.Compiled);
@@ -404,6 +405,7 @@ namespace VoxtaBridge
                     rest = rest.Trim();
                     if (m.Groups["kind"].Value.Equals("Token", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (!m.Groups["id"].Success) continue; // tokens are looked up by id
                         currentToken = new Token { Name = Clean(rest) };
                         tokens[int.Parse(m.Groups["id"].Value)] = currentToken;
                         continue;

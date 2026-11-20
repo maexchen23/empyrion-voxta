@@ -246,3 +246,27 @@ public class GameTextVolumeTests
         Assert.Equal((30, false), t.Magazine("Rifle", "5.56mmBullet"));
     }
 }
+
+public class GameTextHeaderTests
+{
+    [Fact]
+    public void Blocks_without_an_id_are_read()
+    {
+        var t = new GameText();
+        t.LoadLocalizationCsv(new StringReader("KEY,English\nTestJumpDriveCV,Large Test Jump Drive\n"));
+        t.LoadEcf(new StringReader("""
+            { Block Name: TestJumpDriveCV
+              Class: Container
+              Category: Devices
+            }
+            { Block Name: TestJumpDriveCVPlain, Ref: TestJumpDriveCV
+            }
+            { Token Name: NoId
+            }
+            """));
+        Assert.Contains("TestJumpDriveCV", t.AllNames);
+        Assert.True(t.IsPlayerFacing("TestJumpDriveCV"));
+        Assert.Equal("Large Test Jump Drive", t.DisplayName("TestJumpDriveCVPlain"));
+        Assert.DoesNotContain("NoId", t.AllNames);
+    }
+}

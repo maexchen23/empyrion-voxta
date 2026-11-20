@@ -8,6 +8,17 @@ or chat. It has two parts:
 
 Tested with the **Reforged Eden 2** scenario; most features also work with vanilla Empyrion.
 
+## Showcase
+
+The included character **IDA** (see below) at work:
+
+| "Get me 20 mags for my minigun." | "Craft twenty more." | "I docked the miner, unload it." |
+|---|---|---|
+| ![Ammo for the laser minigun moved into the player's bag](docs/screenshots/ammo-for-the-minigun.png) | ![Charges crafted from the production container and stored](docs/screenshots/craft-and-store.png) | ![A docked miner's ore moved into the right containers](docs/screenshots/unload-the-miner.png) |
+
+She looks up the right ammo for the weapon you carry, crafts from your ship's production container, and sorts cargo
+into the containers where it belongs, all through the bridge.
+
 ## What the character can do
 
 - **Know where you are**: playfield, system, health, oxygen, food, your ship and its tanks, the closest trading places,
@@ -81,6 +92,13 @@ Don't run it on a public server, and don't share the token with people you would
    it to the character. It holds a few background facts; the how-tos come with the module as skills.
 
 The module's **Test** button checks the connection and shows who is online.
+
+### Optional: the IDA character
+
+`IDA-character-<version>.voxpak` (from the releases) is a ready-made companion: IDA, a self-aware UCH support AI who
+lives in your suit's datalink, loosely based on the AI from Reforged Eden 2, dry humour included. The package also
+contains the memory book. Import it in Voxta, then give her the `empyrion` augmentation as above. Her character sheet as
+plain text is in [`characters/ida/ida.md`](characters/ida/ida.md).
 
 ## In the game
 
