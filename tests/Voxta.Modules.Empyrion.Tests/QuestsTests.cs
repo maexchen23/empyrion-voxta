@@ -164,3 +164,19 @@ public class PursuedProgressTests
         Assert.False(st.PursuingReady);
     }
 }
+
+public class SettingsDependencyTests
+{
+    [Fact]
+    public async Task Enabled_fields_exist_and_chat_settings_are_present()
+    {
+        var fields = (await new Voxta.Modules.Empyrion.Configuration.ModuleConfigurationProvider()
+            .GetModuleConfigurationFieldsAsync(null!, null!, CancellationToken.None)).ToList();
+        var names = fields.Select(f => f.Name).Where(n => n != null).ToHashSet();
+        foreach (var f in fields)
+            foreach (var target in f.EnablesFieldsOnActive ?? [])
+                Assert.Contains(target, names);
+        Assert.Contains("GameChatMirror", names);
+        Assert.DoesNotContain("GameChatPrefix", names);
+    }
+}

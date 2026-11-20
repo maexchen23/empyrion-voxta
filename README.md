@@ -36,6 +36,8 @@ into the containers where it belongs, all through the bridge.
   can hand it in.
 - **Galaxy map**: marks systems (also as a numbered warp route), adds markers you keep.
 - **Micro jump**: short jumps of the ship you fly, paid with Pentaxid from a container marked `VJ`.
+- **Game chat**: whisper to yourself in the game's chat to talk to the character (nobody else sees it); she can put
+  details like item counts into your chat, and optionally mirror all her replies there (for playing without voice).
 - **Reacts** to events: arriving somewhere, low oxygen or food, shield down, fuel low, new or completed missions
   (which ones it speaks about is set in the module's settings).
 
@@ -119,6 +121,7 @@ plain text is in [`characters/ida/ida.md`](characters/ida/ida.md).
 | `PlayerVolumeLimit` | `1000` | litres; giving to the player stops there (0 = no limit) |
 | `RequireConstructor` | `false` | crafting needs a matching constructor on the ship |
 | `QuestLog` | `false` | records changes of the players' quest state (dialogue variables, PDA chapters, tokens) with their location to `VoxtaBridge.questlog.txt` next to the DLL, for working out new quest types; the file contains player names |
+| `CombatProbe` | `false` | developer diagnostics: logs game events (kills, attacks), NPCs near players and kill counters to `VoxtaBridge.probe.*.txt` next to the DLL; contains player names |
 | `MicroJumpEnabled` | `true` | allow micro jumps |
 | `MicroJumpMinMeters` / `MicroJumpMaxMeters` | `1000` / `25000` | jump length |
 | `MicroJumpKmPerPentaxid` | `5` | cost: 1 Refined Pentaxid per this many km, at least 1 |

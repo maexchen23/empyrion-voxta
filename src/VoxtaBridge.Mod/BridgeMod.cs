@@ -154,6 +154,11 @@ namespace VoxtaBridge
                             legacyPos[pi.entityId] = (pi.playfield, DateTime.UtcNow, pi.pos.x, pi.pos.y, pi.pos.z);
                         }
                         RecordTokens(pi);
+                        ProbeKills(pi);
+                        break;
+
+                    case CmdId.Event_ChatMessage when data is ChatInfo ci:
+                        ChatFromApi1(ci);
                         break;
 
                     case CmdId.Event_PdaStateChange when data is PdaStateInfo psi:
@@ -174,6 +179,8 @@ namespace VoxtaBridge
         {
             var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             config = BridgeConfig.LoadOrCreate(dir, Log);
+            ProbeHook();
+            ChatHook();
 
             var ok = api.Network.RegisterReceiverForPlayfieldPackets(OnPlayfieldPacket);
             Log($"registered playfield packet receiver: {ok}");
@@ -274,6 +281,7 @@ namespace VoxtaBridge
                 if (path == "/poi-terminal") return HandlePoiTerminal(body);
                 if (path == "/quests") return HandleQuests(body);
                 if (path == "/quest-pursue") return HandlePursueQuest(body);
+                if (path == "/chat-say") return HandleChatSay(body);
                 if (path == "/marks") return HandleMarks(body);
                 if (path == "/microjump") return HandleMicroJump(body);
                 if (path == "/debug/jump") return HandleDebugJump(body);
@@ -343,6 +351,7 @@ namespace VoxtaBridge
                 lock (sync) online = dediPlayers.Values.Where(x => x.Online).ToList();
                 if (tradeMissions != null && online.Count > 0) WriteQuestStatus(j, online); // global.db reads: outside the lock
                 if (online.Count > 0) WriteLive(j, online);
+                WriteChat(j, online);
                 lock (sync)
                 {
                     j.Key("players").Raw(playersJson);
@@ -399,6 +408,7 @@ namespace VoxtaBridge
             var ok = api.Network.RegisterReceiverForDediPackets(OnDediPacket);
             Log($"registered dedi packet receiver: {ok}");
             api.Application.Update += OnUpdate;
+            ProbeHook();
         }
 
         static void OnUpdate()
@@ -410,9 +420,11 @@ namespace VoxtaBridge
                 {
                     FlushDediOutbox(); // every tick: transfer requests are waiting on HTTP threads
                     FlushGives();
+                    FlushSays();
                     FlushApi1Outbox();
                     FlushBookmarkPushes();
                     QuestRecorderTick();
+                    ProbeStatsTick();
                     if (now < nextDediRefresh) return;
                     nextDediRefresh = now.AddMilliseconds(config?.SnapshotIntervalMs ?? 2000);
                     RefreshDediPlayers();
@@ -435,6 +447,7 @@ namespace VoxtaBridge
                     {
                         SendSnapshot(pf);
                         try { SendBoxes(pf); } catch (Exception e) { Log($"boxes for {pf.Name} failed: {e.Message}"); }
+                        try { ProbeNpcs(pf); } catch (Exception e) { Log($"probe npcs: {e.Message}"); }
                     }
                     ForgetAbsentPlayers(loaded);
                     ScanSizes(loaded, now);

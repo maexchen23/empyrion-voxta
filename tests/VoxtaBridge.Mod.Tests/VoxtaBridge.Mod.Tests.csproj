@@ -26,6 +26,7 @@
         <Compile Include="..\..\src\VoxtaBridge.Mod\PlanetInfo.cs" Link="PlanetInfo.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\TradeMissions.cs" Link="TradeMissions.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\LiveBoxes.cs" Link="LiveBoxes.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\ChatText.cs" Link="ChatText.cs" />
     </ItemGroup>
 
     <ItemGroup>

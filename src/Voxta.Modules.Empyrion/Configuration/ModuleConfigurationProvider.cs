@@ -37,6 +37,7 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         new(EmpyrionConstants.PoiTerminalTool, "Read A POI's Info Terminal"),
         new(EmpyrionConstants.ListQuestsTool, "List Trader Missions"),
         new(EmpyrionConstants.PursueQuestTool, "Pursue A Trader Mission"),
+        new(EmpyrionConstants.SendToChatTool, "Write To The Game Chat"),
         new(EmpyrionConstants.MarkStarsTool, "Mark Stars On The Galaxy Map"),
         new(EmpyrionConstants.ClearMarksTool, "Clear Galaxy Map Marks"),
         new(EmpyrionConstants.AddMapMarkerTool, "Add Permanent Map Marker"),
@@ -164,6 +165,24 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         DefaultValue = "VJ",
     };
 
+    public static readonly FormBooleanField GameChat = new()
+    {
+        Name = "GameChat",
+        Label = "Listen To The Game Chat",
+        Text = "Private messages the player sends to themselves in the game's chat (whisper to your own name) go to the " +
+               "character, as if typed here. Nobody else sees them.",
+        DefaultValue = true,
+    };
+
+    public static readonly FormBooleanField GameChatMirror = new()
+    {
+        Name = "GameChatMirror",
+        Label = "Mirror Replies To The Game Chat",
+        Text = "Also send each of the character's replies to the player's game chat, as a private message from the character. " +
+               "A fallback when there is no voice (text to speech); with voice, leave it off.",
+        DefaultValue = false,
+    };
+
     public static readonly FormIntField PollSeconds = new()
     {
         Name = "PollSeconds",
@@ -200,6 +219,8 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
             SteamId,
             LiveContext,
             Reactions,
+            GameChat,
+            GameChatMirror,
             PollSeconds,
             ReactionCooldownSeconds,
             VcSuffix,

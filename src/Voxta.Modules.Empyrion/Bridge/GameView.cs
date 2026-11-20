@@ -18,6 +18,13 @@ public sealed class GameView
     public string PlayerName { get; }
     public string? SteamId { get; private init; }
 
+    /// <summary>The player's recent game chat messages from /status: (seq, channel, text), oldest first.</summary>
+    public static List<(long Seq, string Channel, string Text)> ChatLines(JsonElement root, string steamId) =>
+        root.TryGetProperty("chat", out var all) && all.ValueKind == JsonValueKind.Object && all.TryGetProperty(steamId, out var mine) &&
+        mine.ValueKind == JsonValueKind.Array
+            ? mine.EnumerateArray().Select(c => (Long(c, "seq") ?? 0, Str(c, "channel") ?? "", Str(c, "text") ?? "")).OrderBy(c => c.Item1).ToList()
+            : [];
+
     /// <summary>A mission's "needs" array.</summary>
     public static List<MissionNeed> Needs(JsonElement m) =>
         Array(m, "needs").Select(n => new MissionNeed(Str(n, "item") ?? "", Str(n, "name") ?? Str(n, "item") ?? "", (int)(Long(n, "count") ?? 0),

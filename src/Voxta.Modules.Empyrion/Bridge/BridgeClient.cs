@@ -144,6 +144,14 @@ public sealed class BridgeClient
         return PostFormAsync("/quest-pursue", form, cancellationToken);
     }
 
+    /// <summary>POST /chat-say: a private message to the player in the game chat, under a sender name.</summary>
+    public Task<JsonDocument> ChatSayAsync(string text, string from, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("text", text), new("from", from) };
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/chat-say", form, cancellationToken);
+    }
+
     /// <summary>POST /poi-trade: what the traders at a POI sell and buy.</summary>
     public Task<JsonDocument> PoiTradeAsync(string poi, bool detail, bool all, string? steamId, CancellationToken cancellationToken)
     {

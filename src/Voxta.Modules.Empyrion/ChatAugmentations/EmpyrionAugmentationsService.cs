@@ -43,6 +43,7 @@ public class EmpyrionAugmentationsService(
                     new AugmentationToolDeclaration(EmpyrionConstants.PoiTerminalTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.ListQuestsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.PursueQuestTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.SendToChatTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.MarkStarsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.ClearMarksTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.AddMapMarkerTool, EmpyrionConstants.ContextKey),
@@ -77,7 +78,9 @@ public class EmpyrionAugmentationsService(
                             Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceDoneFactoryMissions), true),
                             Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceDoneTraderMissions), false),
                             Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnouncePursuedDone), true),
-                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceItemsReady), true)));
+                            Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceItemsReady), true)),
+                        Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.GameChat), true),
+                        Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.GameChatMirror), false));
 
                     var instance = new EmpyrionChatAugmentationInstance(
                         session,

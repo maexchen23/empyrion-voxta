@@ -42,6 +42,8 @@ namespace VoxtaBridge
         /// tokens (with where the player was) to VoxtaBridge.questlog.txt, to learn how quests and contracts are stored.
         /// </summary>
         public bool QuestLog = false;
+        /// <summary>Combat probe: log game events, NPCs near players and kill statistics (read-only, for development).</summary>
+        public bool CombatProbe = false;
         public string Path;
 
         /// <param name="create">false on playfield servers: read only, never write a token (the dedi owns the file).</param>
@@ -75,6 +77,7 @@ namespace VoxtaBridge
                     System.Globalization.CultureInfo.InvariantCulture, out var pvd) && pvd >= 0) cfg.PlayerVolumeLimit = pvd;
             if (values.TryGetValue("RequireConstructor", out var rc) && bool.TryParse(rc, out var rcb)) cfg.RequireConstructor = rcb;
             if (values.TryGetValue("QuestLog", out var ql) && bool.TryParse(ql, out var qlb)) cfg.QuestLog = qlb;
+            if (values.TryGetValue("CombatProbe", out var cp) && bool.TryParse(cp, out var cpb)) cfg.CombatProbe = cpb;
             double D(string k, double d) => values.TryGetValue(k, out var v) && double.TryParse(v, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var x) && x >= 0 ? x : d;
             if (values.TryGetValue("MicroJumpEnabled", out var mje) && bool.TryParse(mje, out var mjeb)) cfg.MicroJumpEnabled = mjeb;

@@ -15,7 +15,7 @@ namespace Voxta.Modules.Empyrion.ChatAugmentations;
 /// <param name="VcSuffix">Name suffix of the crafting container.</param>
 /// <param name="VjSuffix">Name suffix of the container that pays for micro jumps.</param>
 public sealed record LiveSettings(bool LiveContext, bool Reactions, TimeSpan PollInterval, TimeSpan ReactionCooldown, string VcSuffix = "VC", string VjSuffix = "VJ",
-    MissionAnnounce? Missions = null);
+    MissionAnnounce? Missions = null, bool GameChat = true, bool GameChatMirror = false);
 
 public sealed class EmpyrionChatAugmentationInstance(
     IChatSessionChatAugmentationApi session,
@@ -25,7 +25,7 @@ public sealed class EmpyrionChatAugmentationInstance(
     Func<string, bool> isToolSelected,
     LiveSettings live,
     ILogger<EmpyrionChatAugmentationInstance> logger
-) : IToolsChatAugmentation
+) : IToolsChatAugmentation, IChatPostProcessAugmentation
 {
     private const string FilterArg = "filter";
     private const string ItemArg = "item";
@@ -48,6 +48,7 @@ public sealed class EmpyrionChatAugmentationInstance(
     private const string NameArg = "name";
     private const string HudArg = "hud";
     private const string StatusArg = "status";
+    private const string TextArg = "text";
     private const string NearArg = "near";
 
     private readonly CancellationTokenSource _stop = new();
@@ -219,6 +220,17 @@ public sealed class EmpyrionChatAugmentationInstance(
                     {
                         Name = NameArg, Type = FunctionArgumentType.String, Required = true,
                         Description = "Factory name (or part of it, or its playfield) as empyrion_list_quests gives it, or 'none'.",
+                    },
+                ]),
+            MarkTool(EmpyrionConstants.SendToChatTool,
+                "Write a message into the player's game chat (a private message from you). For details that are tedious to " +
+                "listen to and handy to read later: item counts, lists, coordinates, a shopping list. Say only the short " +
+                "version out loud and mention that the details are in their chat.",
+                [
+                    new FunctionArgumentDefinition
+                    {
+                        Name = TextArg, Type = FunctionArgumentType.String, Required = true,
+                        Description = "The text for the chat; plain text, line breaks for lists. Long texts are split into several messages.",
                     },
                 ]),
             ReadTool(EmpyrionConstants.PoiTradeTool,
@@ -551,6 +563,13 @@ public sealed class EmpyrionChatAugmentationInstance(
             }
             catch (BridgeException exc) { return new ChatToolCallResult(exc.Message, IsError: true); }
         }
+        if (name == EmpyrionConstants.SendToChatTool)
+        {
+            if (GetString(arguments, TextArg) is not { Length: > 0 } chatText)
+                return new ChatToolCallResult($"'{TextArg}' is required.", IsError: true);
+            return await BridgeCallAsync(() => client.ChatSayAsync(chatText.Trim(), CharacterName(), steamId, cancellationToken),
+                r => Str(r, "error") ?? "Sent to the player's game chat.");
+        }
         if (name == EmpyrionConstants.PoiTradeTool)
         {
             if (GetString(arguments, PoiArg) is not { Length: > 0 } poi)
@@ -876,6 +895,7 @@ public sealed class EmpyrionChatAugmentationInstance(
         var lastSpoken = DateTimeOffset.MinValue;
         string? nearby = null, nearbyPlayfield = null;
         var warpSmoother = new WarpSmoother();
+        var gameChat = new GameChatFilter(null);
         var nearbyAt = DateTimeOffset.MinValue;
 
         while (!ct.IsCancellationRequested)
@@ -889,6 +909,17 @@ public sealed class EmpyrionChatAugmentationInstance(
                     var view = GameView.Create(doc.RootElement, steamId, out var error);
                     state = warpSmoother.Apply(view?.State(), DateTimeOffset.UtcNow);
                     context = state?.ToContext() ?? $"[ EMPYRION ] {error}";
+                    if (live.GameChat && view?.SteamId is { } chatPlayer)
+                    {
+                        var chatTexts = gameChat.Take(GameView.ChatLines(doc.RootElement, chatPlayer));
+                        foreach (var text in chatTexts)
+                        {
+                            logger.LogInformation("Empyrion game chat -> character ({Length} chars)", text.Length);
+                            await session.SendUserMessageAsync(text, ct);
+                        }
+                        // SendUserMessageAsync only adds the message (seen with Voxta 1.13): ask for the reply explicitly
+                        if (chatTexts.Count > 0) await session.TriggerReplyAsync(ct);
+                    }
                 }
 
                 // nearby places: rescanned every poll (at most every 5 s) and on a playfield change (one bridge call, read-only)
@@ -1030,6 +1061,62 @@ public sealed class EmpyrionChatAugmentationInstance(
         }
         return parts.Count == 0 ? "" : "Already in reach (inventory, ship and own structures nearby): " + string.Join("; ", parts) + ".";
     }
+
+    // ----- replies mirrored to the game chat ----------------------------------------------------
+
+    private readonly object _mirrorLock = new();
+    private readonly System.Text.StringBuilder _mirror = new();
+    private CancellationTokenSource? _mirrorFlush;
+    private static readonly TimeSpan MirrorQuiet = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Called for each sentence of a reply while it streams (unchanged here). With mirroring on, the sentences are
+    /// collected and sent to the game chat as one message once no sentence came for <see cref="MirrorQuiet"/>.
+    /// </summary>
+    public ValueTask<string> PostProcessTextAsync(ChatMessageRole role, string text, CancellationToken cancellationToken)
+    {
+        if (live.GameChatMirror && role == ChatMessageRole.Assistant && !string.IsNullOrWhiteSpace(text))
+        {
+            CancellationTokenSource cts;
+            lock (_mirrorLock)
+            {
+                if (_mirror.Length > 0) _mirror.Append(' ');
+                _mirror.Append(text.Trim());
+                _mirrorFlush?.Cancel();
+                _mirrorFlush = cts = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+            }
+            _ = FlushMirrorAsync(cts.Token);
+        }
+        return ValueTask.FromResult(text);
+    }
+
+    private async Task FlushMirrorAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(MirrorQuiet, ct);
+            string text;
+            lock (_mirrorLock)
+            {
+                text = _mirror.ToString();
+                _mirror.Clear();
+            }
+            if (text.Length == 0) return;
+            using var _ = await client.ChatSayAsync(text, CharacterName(), steamId, ct);
+        }
+        catch (OperationCanceledException) { /* a newer sentence came, or the chat ended */ }
+        catch (Exception exc) { logger.LogWarning("Empyrion: mirroring a reply to the game chat failed: {Message}", exc.Message); }
+    }
+
+    /// <summary>The character's name for the game chat ("IDA"), from Voxta's template.</summary>
+    private string CharacterName()
+    {
+        try { return session.ProcessSimpleTemplate("{{ char }}") is { Length: > 0 } n && !n.Contains("{{") ? n : "AI"; }
+        catch (Exception) { return "AI"; }
+    }
+
+    private static string? Str(JsonElement e, string p) =>
+        e.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     private static string WhereLines(string? context) =>
         context == null ? "" : string.Join(" | ", context.Split('\n').Select(l => l.Trim())
