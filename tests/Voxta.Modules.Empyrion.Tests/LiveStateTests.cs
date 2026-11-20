@@ -140,6 +140,65 @@ public class LiveStateTests
     }
 
     [Fact]
+    public void Leaving_the_pilot_seat_and_standing_in_the_ship_is_no_exit()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        var piloting = Base with { IsPilot = true };
+        var standingOnIt = Base with { IsPilot = false, Standing = true };
+        var aboard = Base with { IsPilot = false };
+        var a = w.Apply(piloting, t);
+        var b = w.Apply(standingOnIt, t.AddSeconds(2));
+        var c = w.Apply(aboard, t.AddSeconds(4));
+
+        Assert.True(b!.InShip);
+        Assert.DoesNotContain(GameEvents.Diff(a, b).Concat(GameEvents.Diff(b, c)), e => e.Name is "LeftShip" or "BoardedShip" or "ChangedShip");
+        Assert.Contains(GameEvents.Diff(a, b), e => e.Name == "LeftPilotSeat");
+    }
+
+    [Fact]
+    public void Pilot_seat_changes_aboard_are_quiet_events()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        var piloting = w.Apply(Base with { IsPilot = true }, t);
+        var standingInIt = w.Apply(Base with { IsPilot = false, Standing = true }, t.AddSeconds(2));
+        var seatedAgain = w.Apply(Base with { IsPilot = true }, t.AddSeconds(20));
+
+        var left = Assert.Single(GameEvents.Diff(piloting, standingInIt));
+        Assert.Equal("LeftPilotSeat", left.Name);
+        Assert.False(left.Important);
+        Assert.Equal("Left the pilot seat of the SV 'Test Corvette', still aboard.", left.Description);
+        var took = Assert.Single(GameEvents.Diff(standingInIt, seatedAgain));
+        Assert.Equal("TookControls", took.Name);
+        Assert.Equal("Took the controls of the SV 'Test Corvette'.", took.Description);
+    }
+
+    [Fact]
+    public void Walking_off_the_ship_after_standing_on_it_is_the_exit()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        var a = w.Apply(Base, t);
+        var b = w.Apply(Base with { IsPilot = false, Standing = true }, t.AddSeconds(2));
+        var c = w.Apply(Base with { ShipName = null, ShipType = null, IsPilot = false, Standing = false }, t.AddSeconds(30));
+
+        Assert.True(b!.InShip);
+        Assert.False(c!.InShip);
+        Assert.Equal("LeftShip", Assert.Single(GameEvents.Diff(b, c), e => e.Name is "LeftShip" or "BoardedShip").Name);
+    }
+
+    [Fact]
+    public void Standing_on_another_ship_is_not_aboard_the_old_one()
+    {
+        var w = new WarpSmoother();
+        var t = DateTimeOffset.UtcNow;
+        w.Apply(Base, t);
+        var other = w.Apply(Base with { ShipName = "Test Hauler", IsPilot = false, Standing = true }, t.AddSeconds(2));
+        Assert.False(other!.InShip);
+    }
+
+    [Fact]
     public void Arriving_without_the_ship_is_an_exit_after_the_hold()
     {
         var w = new WarpSmoother();

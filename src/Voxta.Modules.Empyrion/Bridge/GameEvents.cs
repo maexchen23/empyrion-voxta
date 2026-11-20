@@ -15,10 +15,17 @@ public sealed record MissionAnnounce(bool NewFactory = true, bool NewTrader = fa
     bool ItemsReady = true);
 
 /// <summary>
-/// Smooths over the seconds of a warp: on the new playfield the player is briefly on no structure until the ship
-/// arrives there too, which would read as "left the ship, now on foot" and then "boarded the ship". Only then (ship
-/// gone and the playfield changed) the last ship state is kept, for at most <see cref="HoldFor"/>. On the same playfield
-/// a missing ship is a real exit and shows at once.
+/// Smooths over two gaps in the game's "which ship is the player in":
+/// <list type="bullet">
+/// <item>A warp: on the new playfield the player is briefly on no structure until the ship arrives there too, which
+/// would read as "left the ship, now on foot" and then "boarded the ship". Only then (ship gone and the playfield
+/// changed) the last ship state is kept, for at most <see cref="HoldFor"/>.</item>
+/// <item>Leaving the pilot seat: the game reports no structure for a moment, and the bridge falls back to "standing on"
+/// the ship. Standing on (or in) the ship the player was aboard counts as still aboard; leaving it (standing on nothing
+/// or on something else) is the exit. So getting out of the seat is no event, and being thrown out of a moving ship
+/// becomes "left" once it has moved away.</item>
+/// </list>
+/// On the same playfield a missing ship is a real exit and shows at once.
 /// </summary>
 public sealed class WarpSmoother
 {
@@ -33,6 +40,8 @@ public sealed class WarpSmoother
         if (raw == null) { Reset(); return null; }
         if (raw.InShip) { _lastInShip = raw; _lostAt = null; return raw; }
         if (_lastInShip == null) return raw;
+        if (raw.Standing && raw.ShipName != null && raw.ShipName == _lastInShip.ShipName && raw.Playfield == _lastInShip.Playfield)
+            return raw with { Standing = false, IsPilot = false }; // still on the ship they were aboard: aboard
         if (raw.Playfield == _lastInShip.Playfield) { Reset(); return raw; } // same playfield: really got out
         _lostAt ??= now;
         if (now - _lostAt.Value > HoldFor) { Reset(); return raw; }
@@ -95,6 +104,10 @@ public static class GameEvents
             events.Add(new("LeftShip", $"Left the {prev.ShipType} '{prev.ShipName}', now on foot.", false));
         else if (prev.InShip && next.InShip && prev.ShipName != next.ShipName)
             events.Add(new("ChangedShip", $"Moved from '{prev.ShipName}' to the {next.ShipType} '{next.ShipName}'.", false));
+        else if (prev.InShip && next.InShip && !prev.IsPilot && next.IsPilot)
+            events.Add(new("TookControls", $"Took the controls of the {next.ShipType} '{next.ShipName}'.", false));
+        else if (prev.InShip && next.InShip && prev.IsPilot && !next.IsPilot)
+            events.Add(new("LeftPilotSeat", $"Left the pilot seat of the {next.ShipType} '{next.ShipName}', still aboard.", false));
 
         Vital(events, "Health", "health", prev.Health, prev.HealthMax, next.Health, next.HealthMax);
         Vital(events, "Oxygen", "suit oxygen", prev.Oxygen, prev.OxygenMax, next.Oxygen, next.OxygenMax);

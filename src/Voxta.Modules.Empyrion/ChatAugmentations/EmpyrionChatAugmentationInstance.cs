@@ -13,8 +13,7 @@ namespace Voxta.Modules.Empyrion.ChatAugmentations;
 /// <param name="PollInterval">How often the bridge is read.</param>
 /// <param name="ReactionCooldown">Minimum time between two spoken reactions.</param>
 /// <param name="VcSuffix">Name suffix of the crafting container.</param>
-/// <param name="VjSuffix">Name suffix of the container that pays for micro jumps.</param>
-public sealed record LiveSettings(bool LiveContext, bool Reactions, TimeSpan PollInterval, TimeSpan ReactionCooldown, string VcSuffix = "VC", string VjSuffix = "VJ",
+public sealed record LiveSettings(bool LiveContext, bool Reactions, TimeSpan PollInterval, TimeSpan ReactionCooldown, string VcSuffix = "VC",
     MissionAnnounce? Missions = null, bool GameChat = true, bool GameChatMirror = false);
 
 public sealed class EmpyrionChatAugmentationInstance(
@@ -50,6 +49,7 @@ public sealed class EmpyrionChatAugmentationInstance(
     private const string StatusArg = "status";
     private const string TextArg = "text";
     private const string NearArg = "near";
+    private const string ChangesArg = "changes";
 
     private readonly CancellationTokenSource _stop = new();
     private Task? _poller;
@@ -339,7 +339,7 @@ public sealed class EmpyrionChatAugmentationInstance(
                 EmpyrionConstants.MicroJumpTool,
                 "Micro jump the ship the player flies, instantly, as planned with empyrion_plan_microjump. Only after you told the " +
                 "player the plan and they agreed. For an aimed jump pass the target name from the plan; the jump is refused if the " +
-                $"ship now points elsewhere. Costs Refined Pentaxid from the ship's jump container (name ending in '{live.VjSuffix}'); the drive then cools down for a while.",
+                "ship now points elsewhere. Costs Refined Pentaxid from the ship's pentaxid tank; the drive then cools down for a while.",
                 ChatToolSchema.FromArguments(MicroJumpArgs(withTarget: true)),
                 EmpyrionConstants.ContextKey)
             {
@@ -349,11 +349,57 @@ public sealed class EmpyrionChatAugmentationInstance(
                 Permission = ToolPermissionClass.Act,
                 Display = ToolDisplayMode.Card,
             },
+            ReadTool(EmpyrionConstants.FindShipControlsTool,
+                "Search the switchable controls of the active structure (the own ship or base the item tools work from) and " +
+                "what is docked to it, or of a named own ship or base in reach: signals and named devices or device groups whose name or block type contains the query, plus main power " +
+                "and shield, each with its current state. Never lists everything; search for what the player talks about " +
+                "('turret', 'light', 'production', a signal name). Changes nothing.",
+                [
+                    new FunctionArgumentDefinition
+                    {
+                        Name = QueryArg, Type = FunctionArgumentType.String, Required = true,
+                        Description = "Part of a name or block type, e.g. 'turret', 'production', 'light', 'gear'.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = StructureArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "Name of one own ship or base in reach (docking group, transfer range). Leave out for the active structure and its docking group.",
+                    },
+                ]),
+            new ChatTool(
+                EmpyrionConstants.ShipControlTool,
+                "Switch things on one of the player's own ships or bases: main power, the shield, signals (from the control " +
+                "panel or switches) and named devices or device groups, on, off or toggle. Several at once in one call (e.g. a " +
+                "parking routine). Only when the player asks or agreed. Unknown names come back with close matches; use " +
+                "empyrion_find_ship_controls when unsure. Devices without a custom name or group can't be switched.",
+                ChatToolSchema.FromArguments([
+                    new FunctionArgumentDefinition
+                    {
+                        Name = ChangesArg, Type = FunctionArgumentType.String, Required = true,
+                        Description = "'target=state' items separated by ';', state on, off or toggle. Target: power, shield, a " +
+                                      "signal name or a device/group name, e.g. 'POWERSAVER=on; Production=off' or 'shield=off'. " +
+                                      "Prefix signal: or device: if a name is both.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = StructureArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "Name of an own ship or base in reach (e.g. a docked miner). Leave out for the active structure.",
+                    },
+                ]),
+                EmpyrionConstants.ContextKey)
+            {
+                AugmentationKey = EmpyrionConstants.AugmentationKey,
+                ChatStyles = chatStyles,
+                Enabled = isToolSelected(EmpyrionConstants.ShipControlTool),
+                Permission = ToolPermissionClass.Act,
+                Display = ToolDisplayMode.Card,
+            },
             new ChatTool(
                 EmpyrionConstants.TransferItemsTool,
                 "Move items between containers in reach (ship, carrier, docked ships, own structures in range) and the player's " +
                 "own inventory. Use the container labels from empyrion_get_current_ship; use 'player' (or 'bag' / 'toolbar') for " +
-                "the player's inventory. Changes the game, so only do it when the player asks.",
+                "the player's inventory. A ship's 'Fuel Tank', 'Oxygen Tank' or 'Pentaxid Tank' can be the target (fill it from containers) or " +
+                "the source (take fuel cells, oxygen bottles or Refined Pentaxid out). Changes the game, so only do it when the player asks.",
                 ChatToolSchema.FromArguments([
                     new FunctionArgumentDefinition
                     {
@@ -370,13 +416,15 @@ public sealed class EmpyrionChatAugmentationInstance(
                         Name = ToArg, Type = FunctionArgumentType.String, Required = true,
                         Description = "Target container label as listed by empyrion_get_current_ship, e.g. 'H Ship Ammo @ Test Hauler' " +
                                       "or 'Hold @ Test Corvette', 'player' / 'bag' to give the items to the player, or 'toolbar' to append them to the hotbar " +
-                                      "(the game fills it in order). The part before '@' alone works if it is unique. " +
+                                      "(the game fills it in order), or a tank: 'Fuel Tank', 'Oxygen Tank', 'Pentaxid Tank' (filled from containers, not from the player). " +
+                                      "The part before '@' alone works if it is unique. " +
                                       "Must be exactly one container.",
                     },
                     new FunctionArgumentDefinition
                     {
                         Name = FromArg, Type = FunctionArgumentType.String, Required = false,
-                        Description = "Source container label, a kind like 'cargo', or 'player' / 'bag' / 'toolbar' for the player's inventory. " +
+                        Description = "Source container label, a kind like 'cargo', 'player' / 'bag' / 'toolbar' for the player's inventory, " +
+                                      "or a tank ('Fuel Tank' gives Fuel Cells, 'Oxygen Tank' Oxygen Bottles, 'Pentaxid Tank' Refined Pentaxid; only into containers). " +
                                       "Leave out to take from any other container.",
                     },
                 ]),
@@ -531,6 +579,20 @@ public sealed class EmpyrionChatAugmentationInstance(
         {
             var target = GetString(arguments, NameArg) is { Length: > 0 } n ? n.Trim() : "auto";
             return await BridgeCallAsync(() => client.SetActiveAsync(target, steamId, cancellationToken), GameView.SetActiveResult);
+        }
+        if (name == EmpyrionConstants.FindShipControlsTool)
+        {
+            if (GetString(arguments, QueryArg) is not { Length: > 0 } controlQuery)
+                return new ChatToolCallResult($"'{QueryArg}' is required.", IsError: true);
+            return await BridgeCallAsync(() => client.FindShipControlsAsync(controlQuery.Trim(), GetString(arguments, StructureArg), steamId, cancellationToken),
+                r => WithWorkingFrom(GameView.FindShipControlsResult(r), r));
+        }
+        if (name == EmpyrionConstants.ShipControlTool)
+        {
+            if (GetString(arguments, ChangesArg) is not { Length: > 0 } changes)
+                return new ChatToolCallResult($"'{ChangesArg}' is required, e.g. 'POWERSAVER=on; Production=off'.", IsError: true);
+            return await BridgeCallAsync(() => client.ShipControlAsync(changes.Trim(), GetString(arguments, StructureArg), steamId, cancellationToken),
+                r => WithWorkingFrom(GameView.ShipControlResult(r), r));
         }
         if (name == EmpyrionConstants.GetStructureTool)
         {
@@ -708,7 +770,7 @@ public sealed class EmpyrionChatAugmentationInstance(
         }
         try
         {
-            using var doc = await client.MicroJumpAsync(meters, confirm ? GetString(arguments, TargetArg) : null, live.VjSuffix, confirm, steamId, cancellationToken);
+            using var doc = await client.MicroJumpAsync(meters, confirm ? GetString(arguments, TargetArg) : null, confirm, steamId, cancellationToken);
             var ok = doc.RootElement.TryGetProperty("ok", out var o) && o.ValueKind == JsonValueKind.True;
             return new ChatToolCallResult(GameView.MicroJumpResult(doc.RootElement), IsError: !ok);
         }
@@ -1025,7 +1087,7 @@ public sealed class EmpyrionChatAugmentationInstance(
     }
 
     /// <summary>
-    /// "Already in reach: Communication Equipment 8 of 12 (5 in Ores @ Zeus, 3 in the player's inventory)." from one
+    /// "Already in reach: Communication Equipment 8 of 12 (5 in Ores @ Test Hauler, 3 in the player's inventory)." from one
     /// find per wanted item (same scope as empyrion_find_item: inventory, active structure group, own structures in range).
     /// </summary>
     private async Task<string> ReachTextAsync(IReadOnlyList<MissionNeed> needs, CancellationToken ct)

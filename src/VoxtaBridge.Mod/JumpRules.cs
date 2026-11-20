@@ -10,8 +10,6 @@ namespace VoxtaBridge
     public static class JumpRules
     {
         public const double DefaultKmPerPentaxid = 5;
-        /// <summary>Name suffix of the container that pays for micro jumps, unless Voxta sends another (Voxta module setting).</summary>
-        public const string DefaultContainerSuffix = "VJ";
         /// <summary>Refined Pentaxid (RE2's own micro jump dialogue pays with this item).</summary>
         public const string PentaxidItem = "PentaxidCrystal";
         public const float Buffer = 500f;          // stop this far outside a target of known size

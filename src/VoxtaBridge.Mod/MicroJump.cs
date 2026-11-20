@@ -18,9 +18,10 @@ namespace VoxtaBridge
     ///
     ///   POST /microjump  player=SteamID  distance=metres (empty = aim)  confirm=0|1  expect=target name from the plan
     ///   confirm=0: plan only (target, length, cost, checks). confirm=1: re-plans with the aim of this moment, refuses
-    ///   if the target changed (expect), takes Refined Pentaxid from the "... VJ" container (suffix from the request, set in Voxta), teleports, refunds if the teleport fails.
+    ///   if the target changed (expect), takes Refined Pentaxid from the ship's pentaxid tank, teleports, refunds to the tank if
+    ///   the teleport fails.
     ///
-    /// Differences to the drive's dialogue (accepted): Pentaxid only from the VJ container (not the inventory or tank: the tank cannot be lowered via ModApi);
+    /// Differences to the drive's dialogue (accepted): Pentaxid only from the ship's tank, not the player's inventory;
     /// own cooldown (the dialogue's per-player timer isn't readable from the save); stop distance by target size.
     /// </summary>
     public partial class BridgeMod
@@ -35,7 +36,6 @@ namespace VoxtaBridge
             if (!config.MicroJumpEnabled) return (403, Error("Micro jumps are switched off on this server (MicroJumpEnabled=false)."));
             var f = Form.Parse(body);
             var confirm = f.Get("confirm") == "1";
-            var vjSuffix = string.IsNullOrWhiteSpace(f.Get("vj")) ? JumpRules.DefaultContainerSuffix : f.Get("vj").Trim();
 
             DediPlayer who;
             string why0;
@@ -54,7 +54,6 @@ namespace VoxtaBridge
                 ("min", config.MicroJumpMinMeters.ToString(CultureInfo.InvariantCulture)),
                 ("max", config.MicroJumpMaxMeters.ToString(CultureInfo.InvariantCulture)),
                 ("requiredrive", config.MicroJumpRequireDrive ? "1" : "0"),
-                ("vj", vjSuffix),
                 ("hitlock", config.MicroJumpHitLockSeconds.ToString(CultureInfo.InvariantCulture)),
                 ("bodyclear", config.MicroJumpBodyClearanceMeters.ToString(CultureInfo.InvariantCulture)),
                 ("kmper", config.MicroJumpKmPerPentaxid.ToString(CultureInfo.InvariantCulture)),
@@ -75,10 +74,11 @@ namespace VoxtaBridge
             var cost = Regex.Match(json, "\"cost\":(\\d+)").Groups[1].Value;
             if (!sent)
             {
-                var (rc, rjson, _) = ForwardToPlayfield("microjump-refund", f.Get("player"), ("ship", shipId), ("amount", cost), ("vj", vjSuffix));
+                var paidLabel = Regex.Match(json, "\"container\":\"([^\"]*)\"").Groups[1].Value;
+                var (rc, rjson, _) = ForwardToPlayfield("microjump-refund", f.Get("player"), ("ship", shipId), ("amount", cost));
                 Log($"micro jump teleport failed ({evt} {Describe(data)}), refund: {rjson}");
                 return (200, new Json().Obj().Prop("ok", false)
-                    .Prop("error", $"The jump failed ({Describe(data)}); the {cost} Pentaxid went back into the '{vjSuffix}' container. The ship did not move.")
+                    .Prop("error", $"The jump failed ({Describe(data)}); the {cost} Pentaxid went back into '{paidLabel}'. The ship did not move.")
                     .EndObj().ToString());
             }
             lock (lastJump) lastJump[who.SteamId] = DateTime.UtcNow;
@@ -199,43 +199,38 @@ namespace VoxtaBridge
                     return Fail($"The landing point would be too close to {b.name}.");
 
             // --- cost
-            // Paid with refined Pentaxid items from the one container named "... VJ" on the ship (docking group).
-            // Not from the Pentaxid tank: IStructureTank.AddContent ignores negative amounts (live test 2026-11-18).
+            // Paid with Refined Pentaxid from the ship's pentaxid tank, like the warp drive. The tank is a crystal container:
+            // crystals come out of the tank block, because IStructureTank.AddContent ignores negative amounts for it.
+            // Needs a verified game build (the tank block is found through the game's device lists).
             var kmPer = (double)P("kmper", (float)JumpRules.DefaultKmPerPentaxid);
             var cost = JumpRules.Cost(length, kmPer);
-            var suffix = string.IsNullOrWhiteSpace(req.Get("vj")) ? JumpRules.DefaultContainerSuffix : req.Get("vj").Trim();
-            var vjs = CollectScope(pf, structure, player, req.Get("ownership") != "0", 0, includeRangeContainers: false, null)
-                .Where(c => IsVcName(c.Name, suffix)).ToList();
-            if (vjs.Count == 0)
-                return Fail($"No jump container: name a container on this ship so it ends with '{suffix}' (e.g. 'Pentaxid {suffix}') and put Refined Pentaxid into it.");
-            if (vjs.Count > 1)
-                return Fail($"Several containers end with '{suffix}' ({string.Join(", ", vjs.Select(c => c.Label))}); keep exactly one.");
-            var vj = vjs[0];
             var pentaxidId = ItemIdOf(JumpRules.PentaxidItem);
             if (pentaxidId == 0) return Fail($"The item {JumpRules.PentaxidItem} is unknown to this game.");
-            var have = vj.Count(pentaxidId);
-            if (have < cost)
-                return Fail($"The jump needs {cost} Refined Pentaxid; '{vj.Label}' has {have}.");
+            var payer = TankContainers(new[] { structure }, structure).FirstOrDefault(t => ((TankContainer)t).TankKind == "pentaxid");
+            if (payer == null) return Fail("The ship has no pentaxid tank.");
+            if (PentaxidTankBlocks(structure, out var tankErr).Count == 0) return Fail($"The pentaxid tank can't be used: {tankErr}.");
+            var have = payer.Count(pentaxidId);
+            if (have < cost) return Fail($"The jump needs {cost} Refined Pentaxid; the pentaxid tank has {have}.");
 
             var rot = ship.Rotation.eulerAngles;
             j.Prop("ok", true).Prop("ship", ship.Name).Prop("shipId", ship.Id).Prop("shipType", ship.Type.ToString())
                 .Prop("target", targetName).Prop("targetKind", targetKind).Prop("targetClass", targetClass).Prop("jump", Math.Round(length)).Prop("cost", cost).Prop("kmPerPentaxid", kmPer)
-                .Prop("pentaxid", have).Prop("container", vj.Label).Prop("maxRange", Math.Round(maxLen))
+                .Prop("pentaxid", have).Prop("container", payer.Label).Prop("maxRange", Math.Round(maxLen))
                 .Vec("land", land.x, land.y, land.z).Vec("rotation", rot.x, rot.y, rot.z);
 
             if (req.Get("confirm") != "1") return j.Prop("planned", true).EndObj().ToString();
 
             // --- pay (verify by re-reading; refund handled by the dedi if the teleport fails)
-            if (vj.Locked) return Fail($"'{vj.Label}' is open by someone; close it first.");
-            try { vj.Remove(pentaxidId, cost); }
-            catch (Exception e) { return Fail($"Could not take the Pentaxid from '{vj.Label}' ({e.Message})."); }
-            var after = vj.Count(pentaxidId);
+            if (payer.Locked) return Fail($"'{payer.Label}' is open by someone; close it first.");
+            try { payer.Remove(pentaxidId, cost); }
+            catch (Exception e) { return Fail($"Could not take the Pentaxid from '{payer.Label}' ({e.Message})."); }
+            var after = payer.Count(pentaxidId);
             if (after != have - cost)
             {
-                if (after < have) try { vj.Add(pentaxidId, have - after); } catch { }
-                return Fail($"Could not take the Pentaxid from '{vj.Label}' (had {have}, now {vj.Count(pentaxidId)}).");
+                if (after < have) try { payer.Add(pentaxidId, have - after); } catch { }
+                return Fail($"Could not take the Pentaxid from '{payer.Label}' (had {have}, now {payer.Count(pentaxidId)}).");
             }
-            Log($"micro jump: {player.Name} in {ship.Name} → {targetName}, {length:F0} m, {cost} Pentaxid from {vj.Label} ({have} → {after})");
+            Log($"micro jump: {player.Name} in {ship.Name} → {targetName}, {length:F0} m, {cost} Pentaxid from {payer.Label} ({have} → {after})");
             return j.Prop("paid", true).Prop("pentaxidAfter", after).EndObj().ToString();
         }
 
@@ -248,13 +243,9 @@ namespace VoxtaBridge
             if (pf != null) pf.Entities.TryGetValue(shipId, out ship);
             try
             {
-                int.TryParse(req.Get("player"), out var playerId);
-                var player = pf.Players?.Values.FirstOrDefault(x => x.Id == playerId);
-                var suffix = string.IsNullOrWhiteSpace(req.Get("vj")) ? JumpRules.DefaultContainerSuffix : req.Get("vj").Trim();
-                var vj = CollectScope(pf, ship.Structure, player, false, 0, includeRangeContainers: false, null)
-                    .First(c => IsVcName(c.Name, suffix));
-                vj.Add(ItemIdOf(JumpRules.PentaxidItem), amount);
-                Log($"micro jump refund: {amount} Pentaxid to {vj.Label}");
+                var back = TankContainers(new[] { ship.Structure }, ship.Structure).First(t => ((TankContainer)t).TankKind == "pentaxid");
+                back.Add(ItemIdOf(JumpRules.PentaxidItem), amount);
+                Log($"micro jump refund: {amount} Pentaxid to {back.Label}");
                 return new Json().Obj().Prop("ok", true).EndObj().ToString();
             }
             catch (Exception e)

@@ -224,6 +224,7 @@ namespace VoxtaBridge
                         case "marker-refresh": result = ExecuteMarkerRefresh(req); break;
                         case "pois-pos": result = ExecutePoisPos(req); break;
                         case "structure-info": result = ExecuteStructureInfo(req); break;
+                        case "devices": result = ExecuteDevices(req); break;
                         case "set-active": result = ExecuteSetActive(req); break;
                         default: result = ExecuteTransfer(req); break;
                     }
@@ -261,7 +262,10 @@ namespace VoxtaBridge
                 ? "No own ship or base of the player is aboard or within transfer range."
                 : "The active structure and the own structures in range have no containers.");
 
-            var targets = Transfers.Match(all, req.Get("to"));
+            // the structures' tanks ("Fuel Tank @ Ship") only when named explicitly as target or source
+            var tanks = TankContainers(all.OfType<GameContainer>().Select(c => c.Structure), structure);
+            var named = all.Concat(tanks).ToList();
+            var targets = Transfers.Match(named, req.Get("to"));
             if (targets.Count == 0)
                 return Error($"No container '{req.Get("to")}'. Containers: {string.Join(", ", all.Select(c => c.Label))}.");
             if (targets.Count > 1)
@@ -273,7 +277,7 @@ namespace VoxtaBridge
             if (from == null) sources = all.Where(c => c != target).ToList();
             else
             {
-                sources = Transfers.Match(all, from);
+                sources = Transfers.Match(named, from);
                 if (sources.Count == 0)
                     return Error($"No container '{from}'. Containers: {string.Join(", ", all.Select(c => c.Label))}.");
             }
@@ -286,6 +290,13 @@ namespace VoxtaBridge
             var internalName = ItemName(itemId);
             var display = gameText?.DisplayName(internalName) ?? internalName;
             var stackMode = Transfers.NeedsStackMode(itemId, sources, gameText?.IsToken(internalName) ?? false);
+            if (target is TankContainer tankTarget)
+            {
+                if (stackMode) return Error($"{display} can't go into a tank.");
+                if (tankTarget.Count(itemId) == 0 && (gameText == null || gameText.TankValue(tankTarget.TankKind, internalName) <= 0
+                        || !gameText.TankAccepts(tankTarget.TankKind).Contains(internalName)))
+                    return Error($"The {tankTarget.Name.ToLowerInvariant()} doesn't take {display}. It takes: {string.Join(", ", gameText?.TankAccepts(tankTarget.TankKind).Select(n => gameText.DisplayName(n) ?? n) ?? new string[0])}.");
+            }
 
             var amountText = req.Get("amount") ?? "1";
             int amount;

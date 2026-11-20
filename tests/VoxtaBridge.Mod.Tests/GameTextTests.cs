@@ -269,4 +269,47 @@ public class GameTextHeaderTests
         Assert.Equal("Large Test Jump Drive", t.DisplayName("TestJumpDriveCVPlain"));
         Assert.DoesNotContain("NoId", t.AllNames);
     }
+
+    [Fact]
+    public void TankAcceptListsAndValues()
+    {
+        var t = new GameText();
+        t.LoadEcf(new StringReader("""
+            { +Item Id: 218, Name: EnergyCell
+              FuelValue: 50, type: int, display: true, formatter: WattHour
+            }
+            { +Item Id: 63, Name: BioFuel
+              FuelValue: 15, type: int, display: true, formatter: WattHour
+            }
+            { +Item Id: 80, Name: OxygenBottleLarge
+              O2Value: 250, display: true, type: int  #   O2Value should be multiples of 200
+            }
+            { +Block Id: 1, Name: FuelTankA
+              FuelAccept: "EnergyCell, EnergyCellLarge, FusionCell, BioFuel, BioFuelT2"
+            }
+            { +Block Id: 2, Name: FuelTankB
+              FuelAccept: "EnergyCell, EnergyCellHydrogen"
+            }
+            { +Block Id: 3, Name: FuelTankC
+              FuelAccept: "Eden_IndustrialFuel"
+            }
+            { +Block Id: 4, Name: O2TankA
+              O2Accept: "OxygenBottleLarge,OxygenBottleSmall,RespiratorCharge"
+            }
+            { +Block Id: 5, Name: WarpTankA
+              WarpAccept: PentaxidCrystal
+            }
+            """));
+        Assert.Contains("BioFuel", t.TankAccepts("fuel"));
+        Assert.Contains("EnergyCellHydrogen", t.TankAccepts("fuel"));
+        Assert.Contains("Eden_IndustrialFuel", t.TankAccepts("fuel"));
+        Assert.Equal("EnergyCell", t.TankDrainItem("fuel"));
+        Assert.Equal("OxygenBottleLarge", t.TankDrainItem("oxygen"));
+        Assert.Equal("PentaxidCrystal", t.TankDrainItem("pentaxid"));
+        Assert.Equal(50, t.TankValue("fuel", "EnergyCell"));
+        Assert.Equal(15, t.TankValue("fuel", "BioFuel"));
+        Assert.Equal(250, t.TankValue("oxygen", "OxygenBottleLarge"));
+        Assert.Equal(1, t.TankValue("pentaxid", "PentaxidCrystal"));
+        Assert.Equal(0, t.TankValue("fuel", "OxygenBottleLarge"));
+    }
 }

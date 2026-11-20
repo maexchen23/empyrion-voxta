@@ -44,6 +44,14 @@ namespace VoxtaBridge
         public bool QuestLog = false;
         /// <summary>Combat probe: log game events, NPCs near players and kill statistics (read-only, for development).</summary>
         public bool CombatProbe = false;
+        /// <summary>POST /devices write actions (signals, devices, power, shield, LCD, teleporter, tanks) on own structures.</summary>
+        public bool DeviceControlEnabled = true;
+        /// <summary>Development write tools, not part of the normal game: the write probe's command file
+        /// (VoxtaBridge.probe.cmd.txt) and setting teleporter targets via POST /devices (bypasses the game's range and
+        /// reputation rules, like a creative tool). Never exposed to Voxta.</summary>
+        public bool DevWriteTools = false;
+        /// <summary>Use the game internals (set signals, main power, shield details) on a game build the mod wasn't checked against.</summary>
+        public bool AllowUnverifiedGameInternals = false;
         public string Path;
 
         /// <param name="create">false on playfield servers: read only, never write a token (the dedi owns the file).</param>
@@ -78,6 +86,9 @@ namespace VoxtaBridge
             if (values.TryGetValue("RequireConstructor", out var rc) && bool.TryParse(rc, out var rcb)) cfg.RequireConstructor = rcb;
             if (values.TryGetValue("QuestLog", out var ql) && bool.TryParse(ql, out var qlb)) cfg.QuestLog = qlb;
             if (values.TryGetValue("CombatProbe", out var cp) && bool.TryParse(cp, out var cpb)) cfg.CombatProbe = cpb;
+            if (values.TryGetValue("DeviceControlEnabled", out var dc) && bool.TryParse(dc, out var dcb)) cfg.DeviceControlEnabled = dcb;
+            if (values.TryGetValue("DevWriteTools", out var dw) && bool.TryParse(dw, out var dwb)) cfg.DevWriteTools = dwb;
+            if (values.TryGetValue("AllowUnverifiedGameInternals", out var ag) && bool.TryParse(ag, out var agb)) cfg.AllowUnverifiedGameInternals = agb;
             double D(string k, double d) => values.TryGetValue(k, out var v) && double.TryParse(v, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var x) && x >= 0 ? x : d;
             if (values.TryGetValue("MicroJumpEnabled", out var mje) && bool.TryParse(mje, out var mjeb)) cfg.MicroJumpEnabled = mjeb;
@@ -103,6 +114,7 @@ namespace VoxtaBridge
                         $"PlayerVolumeLimit={cfg.PlayerVolumeLimit.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +
                         $"RequireConstructor={cfg.RequireConstructor}\n" +
                         $"QuestLog={cfg.QuestLog}\n" +
+                        $"DeviceControlEnabled={cfg.DeviceControlEnabled}\nAllowUnverifiedGameInternals={cfg.AllowUnverifiedGameInternals}\nDevWriteTools={cfg.DevWriteTools}\n" +
                         $"MicroJumpEnabled={cfg.MicroJumpEnabled}\nMicroJumpMinMeters={cfg.MicroJumpMinMeters}\nMicroJumpMaxMeters={cfg.MicroJumpMaxMeters}\n" +
                         $"MicroJumpCooldownSeconds={cfg.MicroJumpCooldownSeconds}\nMicroJumpRequireDrive={cfg.MicroJumpRequireDrive}\nMicroJumpHitLockSeconds={cfg.MicroJumpHitLockSeconds}\n" +
                         $"MicroJumpBodyClearanceMeters={cfg.MicroJumpBodyClearanceMeters.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +

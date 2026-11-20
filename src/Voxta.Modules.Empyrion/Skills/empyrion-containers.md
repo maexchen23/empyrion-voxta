@@ -53,6 +53,17 @@ metadata:
 - A container whose inventory window is open in the game can't be used; ask the player to close it and try again.
 - Weapons, tools and food keep their state (loaded rounds, wear, spoilage) and move as whole items, one per slot.
 
+## Tanks
+
+- Each ship's fuel, oxygen and pentaxid tank can be a move target or source by name: `Fuel Tank`, `Oxygen Tank`,
+  `Pentaxid Tank` (with `@ <structure>` if several ships are in reach). Only when named; tanks never show up in
+  finding, and moves without a source never take from them.
+- Filling: move the item into the tank, e.g. 20 Fuel Cells → `Fuel Tank`. The tank takes what it accepts (fuel: fuel
+  cells and bio fuel; oxygen: oxygen bottles; pentaxid: Refined Pentaxid) and only as much as fits; the rest stays.
+- Taking out works like the game: only as the item the game gives back (Fuel Cell, Oxygen Bottle, Refined Pentaxid),
+  e.g. 5 Fuel Cell from `Fuel Tank` → a cargo box. Fuel cell count = tank content ÷ 50 (oxygen ÷ 250, pentaxid 1 each).
+- Tank levels: `empyrion_get_structure` or `empyrion_get_current_ship`.
+
 ## "Give me 10 mags"
 
 - `empyrion_search_items` shows the magazine with the ammo a weapon takes: "magazine 30" means 10 mags = 300 rounds;

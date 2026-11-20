@@ -799,6 +799,49 @@ public sealed class GameView
     }
 
     /// <summary>Answer of POST /microjump (plan or jump).</summary>
+    /// <summary>One control as "'Name' (signal, on)" / "'Multi Turret' (device: TurretCVMinigun, off) on 'Ship'".</summary>
+    private static string ControlLine(JsonElement c, bool withStructure)
+    {
+        var kind = Str(c, "kind");
+        var what = kind == "device" && Str(c, "type") is { Length: > 0 } t ? $"device: {t}" : kind;
+        var line = kind is "power" or "shield" ? $"{kind} ({Str(c, "state")})" : $"'{Str(c, "name")}' ({what}, {Str(c, "state")})";
+        return withStructure ? $"{line} on '{Str(c, "structure")}'" : line;
+    }
+
+    /// <summary>Answer of POST /devices action=find.</summary>
+    public static string FindShipControlsResult(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True))
+            return Str(r, "error") ?? "Unknown error.";
+        var structures = Array(r, "structures").Select(x => x.GetString()).ToList();
+        var controls = Array(r, "controls").ToList();
+        var several = structures.Count > 1;
+        var sb = new StringBuilder();
+        sb.AppendLine($"Controls matching '{Str(r, "query")}' on {string.Join(", ", structures.Select(x => $"'{x}'"))}: {Num(r, "matches")}.");
+        foreach (var c in controls) sb.AppendLine("- " + ControlLine(c, several));
+        if (Str(r, "note") is { } note) sb.AppendLine($"({note})");
+        if (controls.Count > 0)
+            sb.AppendLine($"Switch them with {EmpyrionConstants.ShipControlTool} (target = the name, power or shield; structure = the ship's name).");
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>Answer of POST /devices action=control.</summary>
+    public static string ShipControlResult(JsonElement r)
+    {
+        if (r.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String) return e.GetString() ?? "Unknown error.";
+        var sb = new StringBuilder();
+        sb.AppendLine($"On '{Str(r, "structure")}':");
+        foreach (var x in Array(r, "results"))
+        {
+            var name = Str(x, "name") ?? Str(x, "target");
+            var change = Str(x, "before") is { } b && Str(x, "now") is { } n ? $" ({b} → {n})" : "";
+            sb.AppendLine($"- {name}: {Str(x, "result")}{change}");
+            var close = Array(x, "closeMatches").ToList();
+            if (close.Count > 0) sb.AppendLine("  Close matches: " + string.Join("; ", close.Select(c => ControlLine(c, false))));
+        }
+        return sb.ToString().TrimEnd();
+    }
+
     public static string MicroJumpResult(JsonElement r)
     {
         var ok = r.TryGetProperty("ok", out var o) && o.ValueKind == JsonValueKind.True;

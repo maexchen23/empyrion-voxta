@@ -46,6 +46,8 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         new(EmpyrionConstants.PlanMicroJumpTool, "Plan Micro Jump"),
         new(EmpyrionConstants.MicroJumpTool, "Micro Jump (moves the ship)"),
         new(EmpyrionConstants.TransferItemsTool, "Transfer Items (changes the game)"),
+        new(EmpyrionConstants.FindShipControlsTool, "Find Ship Controls"),
+        new(EmpyrionConstants.ShipControlTool, "Ship Control: Power, Shield, Signals, Devices (changes the game)"),
     ];
 
     public static readonly FormTextField BridgeUrl = new()
@@ -157,14 +159,6 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         DefaultValue = "VC",
     };
 
-    public static readonly FormTextField VjSuffix = new()
-    {
-        Name = "VjSuffix",
-        Label = "Jump Container Suffix",
-        Text = "Micro jumps are paid with Refined Pentaxid from the one container on the ship whose name ends with this word, e.g. 'Pentaxid VJ'.",
-        DefaultValue = "VJ",
-    };
-
     public static readonly FormBooleanField GameChat = new()
     {
         Name = "GameChat",
@@ -224,7 +218,6 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
             PollSeconds,
             ReactionCooldownSeconds,
             VcSuffix,
-            VjSuffix,
             ChatToolSettingsContributions.GetFormFields(Tools, AutoEnabledFor),
             // last: a title starts a section that runs to the next title, and the tool fields have none of their own
             AnnouncementsTitle,

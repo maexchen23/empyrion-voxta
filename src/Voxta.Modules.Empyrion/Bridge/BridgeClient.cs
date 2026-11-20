@@ -194,10 +194,10 @@ public sealed class BridgeClient
         return PostFormAsync("/craft", form, cancellationToken);
     }
 
-    /// <summary>POST /microjump: plan (confirm=false) or jump. distance in metres, null = aim; expect = target name from the plan; vj = jump container suffix.</summary>
-    public Task<JsonDocument> MicroJumpAsync(string? distanceMeters, string? expect, string vjSuffix, bool confirm, string? steamId, CancellationToken cancellationToken)
+    /// <summary>POST /microjump: plan (confirm=false) or jump. distance in metres, null = aim; expect = target name from the plan.</summary>
+    public Task<JsonDocument> MicroJumpAsync(string? distanceMeters, string? expect, bool confirm, string? steamId, CancellationToken cancellationToken)
     {
-        var form = new List<KeyValuePair<string, string>> { new("confirm", confirm ? "1" : "0"), new("vj", vjSuffix) };
+        var form = new List<KeyValuePair<string, string>> { new("confirm", confirm ? "1" : "0") };
         if (!string.IsNullOrWhiteSpace(distanceMeters)) form.Add(new("distance", distanceMeters));
         if (!string.IsNullOrWhiteSpace(expect)) form.Add(new("expect", expect.Trim()));
         if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
@@ -210,6 +210,24 @@ public sealed class BridgeClient
         var form = new List<KeyValuePair<string, string>> { new("structure", structure) };
         if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
         return PostFormAsync("/containers", form, cancellationToken);
+    }
+
+    /// <summary>POST /devices action=find: signals and named devices matching the query, with state (never the full list).</summary>
+    public Task<JsonDocument> FindShipControlsAsync(string query, string? structure, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("action", "find"), new("query", query) };
+        if (!string.IsNullOrWhiteSpace(structure)) form.Add(new("structure", structure.Trim()));
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/devices", form, cancellationToken);
+    }
+
+    /// <summary>POST /devices action=control: "target=state" changes separated by ';' on one structure.</summary>
+    public Task<JsonDocument> ShipControlAsync(string changes, string? structure, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("action", "control"), new("changes", changes) };
+        if (!string.IsNullOrWhiteSpace(structure)) form.Add(new("structure", structure.Trim()));
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/devices", form, cancellationToken);
     }
 
     private async Task<JsonDocument> PostFormAsync(string path, List<KeyValuePair<string, string>> form, CancellationToken cancellationToken)

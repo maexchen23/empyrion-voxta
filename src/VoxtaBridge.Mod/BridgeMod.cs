@@ -275,6 +275,7 @@ namespace VoxtaBridge
                 if (path == "/where-to-buy") return HandleWhereToBuy(body);
                 if (path == "/pois") return HandlePois(body);
                 if (path == "/structure") return HandleStructureInfo(body);
+                if (path == "/devices") return HandleDevices(body);
                 if (path == "/active") return HandleSetActive(body);
                 if (path == "/system") return HandleSystem(body);
                 if (path == "/poi-trade") return HandlePoiTrade(body);
@@ -448,6 +449,8 @@ namespace VoxtaBridge
                         SendSnapshot(pf);
                         try { SendBoxes(pf); } catch (Exception e) { Log($"boxes for {pf.Name} failed: {e.Message}"); }
                         try { ProbeNpcs(pf); } catch (Exception e) { Log($"probe npcs: {e.Message}"); }
+                        try { ProbeControl(pf); } catch (Exception e) { Log($"probe control: {e.Message}"); }
+                        try { ProbeCommands(pf); } catch (Exception e) { Log($"probe commands: {e.Message}"); }
                     }
                     ForgetAbsentPlayers(loaded);
                     ScanSizes(loaded, now);

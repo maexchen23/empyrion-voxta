@@ -47,6 +47,8 @@ namespace VoxtaBridge
         public Json Prop(string k, bool v) => Key(k).Val(v);
         public Json Prop(string k, long v) => Key(k).Val(v);
         public Json Prop(string k, double v) => Key(k).Val(v);
+        public Json Prop(string k, long? v) => v.HasValue ? Prop(k, v.Value) : Key(k).Raw("null");
+        public Json Prop(string k, bool? v) => v.HasValue ? Prop(k, v.Value) : Key(k).Raw("null");
         public Json Vec(string k, float x, float y, float z) => Key(k).Arr().Val(x).Val(y).Val(z).EndArr();
 
         public override string ToString() => sb.ToString();

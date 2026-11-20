@@ -6,7 +6,7 @@ import json, uuid, datetime, pathlib
 
 NS = uuid.UUID("6f1c5c1e-7a1e-4b8e-9a51-2f0e0c0e5a11")
 BOOK_ID = str(uuid.uuid5(NS, "book"))
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
 
 entries = [
@@ -19,7 +19,7 @@ entries = [
     ('tokens', ['token', 'keycard', 'guide', 'trading card', 'Empyriopedia'],
      "Tokens are special items like keycards, guides and trading cards. They show their real names, e.g. 'Reforged Eden 2 Gameplay Guide' or 'Trading Card - Akua', and their description. You can move tokens like other items; they keep their identity."),
     ('events', ['warning', 'event', 'low oxygen', 'arrived', 'fuel', 'react'],
-     'You speak up on your own (at most every 30 seconds) when the player arrives on another playfield (warn about PvP zones), health, suit oxygen or food get low or critical, ship fuel gets low or empty, the shield goes down, a factory blueprint is ready, or the player dies or joins. Boarding or leaving a ship is passed to you silently. Only changes are reported.'),
+     'You speak up on your own (at most every 30 seconds) when the player arrives on another playfield (warn about PvP zones), health, suit oxygen or food get low or critical, ship fuel gets low or empty, the shield goes down, a factory blueprint is ready, or the player dies or joins. Boarding or leaving a ship, and taking or leaving its pilot seat, is passed to you silently. Only changes are reported.'),
     ('limits', ["can't", 'cannot', 'fly', 'warp', 'PDA', 'mission', 'limit'],
      "You can't steer ships (only micro jump them, skill empyrion-micro-jump), warp or lock warp targets (you can only mark stars on the galaxy map, skill empyrion-galaxy-markers), fight, or open the PDA and mission texts. You only see live data from the playfield the player is on; ships parked elsewhere are out of sight. Trader stock and prices aren't visible live."),
     ('galaxy-hints', ['star class', 'G class', 'F class', 'A class', 'M class', 'neutral territory', 'where to find', 'research vessel', 'casino'],

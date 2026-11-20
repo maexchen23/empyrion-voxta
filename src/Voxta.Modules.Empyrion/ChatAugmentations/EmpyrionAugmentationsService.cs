@@ -52,6 +52,8 @@ public class EmpyrionAugmentationsService(
                     new AugmentationToolDeclaration(EmpyrionConstants.PlanMicroJumpTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.MicroJumpTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.TransferItemsTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.FindShipControlsTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.ShipControlTool, EmpyrionConstants.ContextKey),
                 ],
                 Activation = AugmentationActivation.OptIn,
                 Suggested = false,
@@ -71,7 +73,6 @@ public class EmpyrionAugmentationsService(
                         TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.PollSeconds), 2), 2, 60)),
                         TimeSpan.FromSeconds(Math.Clamp(Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.ReactionCooldownSeconds), 30), 0, 600)),
                         Setting(() => ModuleConfiguration.GetOptional(ModuleConfigurationProvider.VcSuffix), null) is { Length: > 0 } vc ? vc.Trim() : "VC",
-                        Setting(() => ModuleConfiguration.GetOptional(ModuleConfigurationProvider.VjSuffix), null) is { Length: > 0 } vj ? vj.Trim() : "VJ",
                         new MissionAnnounce(
                             Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceFactoryMissions), true),
                             Setting(() => ModuleConfiguration.GetRequired(ModuleConfigurationProvider.AnnounceTraderMissions), false),

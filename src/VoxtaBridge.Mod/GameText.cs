@@ -26,6 +26,10 @@ namespace VoxtaBridge
 
         /// <summary>Set while the scenario's files load; entries seen then are <see cref="Entry.InScenario"/>.</summary>
         bool scenarioPass;
+        /// <summary>Tank accept lists of the tank blocks (BlocksConfig FuelAccept / O2Accept / WarpAccept), per kind
+        /// "fuel" / "oxygen" / "pentaxid"; scenario lists only once the scenario defines any.</summary>
+        readonly Dictionary<string, List<(List<string> items, bool scenario)>> tankAccepts =
+            new Dictionary<string, List<(List<string>, bool)>>(StringComparer.OrdinalIgnoreCase);
         bool anyScenarioEntries;
 
         sealed class Entry
@@ -44,6 +48,9 @@ namespace VoxtaBridge
             public string TemplateRoot;
             public string MarketPrice;
             public string Category;
+            /// <summary>Energy an item puts into a structure's fuel tank (FuelValue) / oxygen tank (O2Value).</summary>
+            public string FuelValue;
+            public string O2Value;
             /// <summary>AmmoType of the firing modes (weapon items; inside <c>{ Child … }</c>), null if none.</summary>
             public List<string> AmmoTypes;
             /// <summary>Magazine size per ammo type (AmmoCapacity of the same firing mode).</summary>
@@ -141,6 +148,14 @@ namespace VoxtaBridge
         public double? MarketPrice(string internalName) =>
             double.TryParse(Resolve(internalName, e => e.MarketPrice, 0, inherit: true), System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0 ? v : (double?)null;
+
+        /// <summary>FuelValue (fuel tank units per item, inherited), or 0.</summary>
+        public int FuelValue(string internalName) =>
+            int.TryParse(Resolve(internalName, e => e.FuelValue, 0, inherit: true), out var v) && v > 0 ? v : 0;
+
+        /// <summary>O2Value (oxygen tank units per item, inherited), or 0.</summary>
+        public int O2Value(string internalName) =>
+            int.TryParse(Resolve(internalName, e => e.O2Value, 0, inherit: true), out var v) && v > 0 ? v : 0;
 
         /// <summary>Category (ItemsConfig/BlocksConfig: Food, Components, Devices, …, inherited), or null.</summary>
         public string Category(string internalName) => Resolve(internalName, e => e.Category, 0, inherit: true);
@@ -487,12 +502,68 @@ namespace VoxtaBridge
                     if (show != null) current.ShowUser = show;
                     var category = Value(t, "Category:");
                     if (category != null) current.Category = category;
+                    foreach (var (key, kind) in new[] { ("FuelAccept:", "fuel"), ("O2Accept:", "oxygen"), ("WarpAccept:", "pentaxid") })
+                    {
+                        if (!t.StartsWith(key, StringComparison.OrdinalIgnoreCase)) continue;
+                        var list = AcceptList(t.Substring(key.Length));
+                        if (list.Count == 0) continue;
+                        if (!tankAccepts.TryGetValue(kind, out var lists)) tankAccepts[kind] = lists = new List<(List<string>, bool)>();
+                        lists.Add((list, scenarioPass));
+                    }
+                    var fuel = Value(t, "FuelValue:");
+                    if (fuel != null) current.FuelValue = fuel;
+                    var o2 = Value(t, "O2Value:");
+                    if (o2 != null) current.O2Value = o2;
                     var market = Value(t, "MarketPrice:");
                     if (market != null) current.MarketPrice = market;
                     var loot = Value(t, "LootList:");
                     if (loot != null) current.LootList = loot.Split(' ', '#')[0];
                 }
             }
+        }
+
+        /// <summary><c>"A, B,C"</c> or <c>A</c> (up to the next comma) → item names.</summary>
+        static List<string> AcceptList(string v)
+        {
+            v = v.Trim();
+            if (v.StartsWith("\""))
+            {
+                var end = v.IndexOf('"', 1);
+                v = end > 0 ? v.Substring(1, end - 1) : v.Substring(1);
+            }
+            else
+            {
+                var comma = v.IndexOf(',');
+                if (comma >= 0) v = v.Substring(0, comma);
+            }
+            return v.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+        }
+
+        IEnumerable<List<string>> AcceptLists(string kind)
+        {
+            if (!tankAccepts.TryGetValue(kind, out var lists)) return Enumerable.Empty<List<string>>();
+            var scen = lists.Where(x => x.scenario).Select(x => x.items).ToList();
+            return scen.Count > 0 ? scen : lists.Select(x => x.items).ToList();
+        }
+
+        /// <summary>Items any tank of this kind ("fuel", "oxygen", "pentaxid") accepts.</summary>
+        public IReadOnlyCollection<string> TankAccepts(string kind) =>
+            new HashSet<string>(AcceptLists(kind).SelectMany(x => x), StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The item the game fills when content is withdrawn: the first item of the most common accept list.</summary>
+        public string TankDrainItem(string kind) =>
+            AcceptLists(kind).GroupBy(x => x[0], StringComparer.OrdinalIgnoreCase).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
+
+        /// <summary>Tank units one item adds: FuelValue / O2Value; pentaxid tanks count crystals (1 each).</summary>
+        public int TankValue(string kind, string internalName)
+        {
+            switch (kind)
+            {
+                case "fuel": return FuelValue(internalName);
+                case "oxygen": return O2Value(internalName);
+                case "pentaxid": return TankAccepts("pentaxid").Contains(internalName) ? 1 : 0;
+            }
+            return 0;
         }
 
         /// <summary>Value of <c>Key: value, other: x</c> when the line starts with the key.</summary>

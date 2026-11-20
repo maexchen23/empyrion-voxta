@@ -1,6 +1,6 @@
 ---
 name: empyrion-micro-jump
-description: "Micro jumping the ship the player flies: requirements, aiming vs. distance, Pentaxid cost from the VJ container, cooldown, and the plan-then-jump steps. Load before planning or doing a micro jump."
+description: "Micro jumping the ship the player flies: requirements, aiming vs. distance, Pentaxid cost from the pentaxid tank, cooldown, and the plan-then-jump steps. Load before planning or doing a micro jump."
 metadata:
   augmentations: empyrion
   tools: empyrion_plan_microjump empyrion_microjump
@@ -11,8 +11,8 @@ metadata:
 - Needs: the player in the pilot seat, in space, not docked, a Prototype Micro Jump Drive on board.
 - Either a distance straight ahead (`distance_km`, up to 25 km), or to what the ship's nose points at right now (an
   object, a HUD marker, a planet or a moon); an aimed jump stops a safe distance short of the target.
-- Cost: 1 Refined Pentaxid per started 5 km (at least 1; the plan shows the real cost), from the one container whose
-  name ends in `VJ` (the player fills it; refused if there is none or too little).
+- Cost: 1 Refined Pentaxid per started 5 km (at least 1; the plan shows the real cost), from the ship's pentaxid tank (the same tank the warp drive uses; refused if it has too
+  little). Mention it when a jump would leave the tank low.
 - The drive cools down for about a minute. It refuses while the ship is under attack (the error says how long).
 - Docked ships come along.
 
