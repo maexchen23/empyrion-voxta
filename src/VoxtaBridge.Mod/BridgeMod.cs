@@ -30,7 +30,7 @@ namespace VoxtaBridge
         // dedi state (written on the game thread or network callback, read by HTTP threads)
         static readonly object sync = new object();
         static string playersJson = "[]";
-        static readonly Queue<(int player, int item, int count)> pendingGives = new Queue<(int, int, int)>();
+        static readonly Queue<(int player, int item, int count, int ammo)> pendingGives = new Queue<(int, int, int, int)>();
         static readonly Dictionary<int, string> legacyPlayerInfo = new Dictionary<int, string>();
         static readonly Dictionary<string, (DateTime at, string json)> pfSnapshots = new Dictionary<string, (DateTime, string)>();
         static readonly Dictionary<string, int> pfPacketCount = new Dictionary<string, int>();
@@ -251,14 +251,14 @@ namespace VoxtaBridge
         {
             while (true)
             {
-                (int player, int item, int count) g;
+                (int player, int item, int count, int ammo) g;
                 lock (sync)
                 {
                     if (pendingGives.Count == 0 || legacy == null) return;
                     g = pendingGives.Dequeue();
                 }
-                legacy.Game_Request(CmdId.Request_Player_AddItem, ++legacySeq, new IdItemStack(g.player, new ItemStack(g.item, g.count)));
-                Log($"debug give: player {g.player} item {g.item} x{g.count}");
+                legacy.Game_Request(CmdId.Request_Player_AddItem, ++legacySeq, new IdItemStack(g.player, new ItemStack(g.item, g.count) { ammo = g.ammo }));
+                Log($"debug give: player {g.player} item {g.item} x{g.count}{(g.ammo != 0 ? $" (ammo/token id {g.ammo})" : "")}");
             }
         }
 
@@ -282,6 +282,7 @@ namespace VoxtaBridge
                 if (path == "/poi-terminal") return HandlePoiTerminal(body);
                 if (path == "/quests") return HandleQuests(body);
                 if (path == "/quest-pursue") return HandlePursueQuest(body);
+                if (path == "/mining-contracts") return HandleMiningContracts(body);
                 if (path == "/chat-say") return HandleChatSay(body);
                 if (path == "/marks") return HandleMarks(body);
                 if (path == "/microjump") return HandleMicroJump(body);
@@ -293,19 +294,22 @@ namespace VoxtaBridge
 
             if (path.StartsWith("/debug/give/"))
             {
-                // /debug/give/<playerEntityId>/<internalItemName>/<count>: test helper (API1 Request_Player_AddItem).
+                // /debug/give/<playerEntityId>/<internalItemName>/<count>[/<ammo>]: test helper (API1 Request_Player_AddItem).
+                // The optional ammo field is a weapon's loaded rounds or, for "Token", the token id.
                 if (!Authorized(auth)) return (401, "{\"error\":\"missing or wrong bearer token\"}");
                 var parts = path.Substring("/debug/give/".Length).Split('/');
-                if (parts.Length != 3 || !int.TryParse(parts[0], out var pid) || !int.TryParse(parts[2], out var count) || count <= 0)
-                    return (400, "{\"error\":\"use /debug/give/<playerEntityId>/<itemName>/<count>\"}");
+                var ammo = 0;
+                if (parts.Length < 3 || parts.Length > 4 || !int.TryParse(parts[0], out var pid) || !int.TryParse(parts[2], out var count) || count <= 0
+                    || (parts.Length == 4 && !int.TryParse(parts[3], out ammo)))
+                    return (400, "{\"error\":\"use /debug/give/<playerEntityId>/<itemName>/<count>[/<ammo or token id>]\"}");
                 var itemName = Uri.UnescapeDataString(parts[1]);
                 int itemId = 0;
                 lock (itemNames)
                     foreach (var kv in itemNames)
                         if (string.Equals(kv.Value, itemName, StringComparison.OrdinalIgnoreCase)) { itemId = kv.Key; break; }
                 if (itemId == 0) return (404, new Json().Obj().Prop("error", $"unknown item '{itemName}'").EndObj().ToString());
-                lock (sync) pendingGives.Enqueue((pid, itemId, count));
-                return (200, new Json().Obj().Prop("queued", itemName).Prop("id", itemId).Prop("count", count).Prop("player", pid).EndObj().ToString());
+                lock (sync) pendingGives.Enqueue((pid, itemId, count, ammo));
+                return (200, new Json().Obj().Prop("queued", itemName).Prop("id", itemId).Prop("count", count).Prop("ammo", ammo).Prop("player", pid).EndObj().ToString());
             }
 
             if (path.StartsWith("/debug/pois"))
@@ -702,6 +706,10 @@ namespace VoxtaBridge
             if (t.IsToken(name))
             {
                 j.Prop("tokenId", st.ammo);
+                if (miningContracts?.ByToken(st.ammo) is MiningContract mc)
+                    j.Key("contract").Obj().Prop("faction", mc.Faction).Prop("credits", mc.Credits).Prop("reputation", mc.Reputation)
+                        .Prop("wants", string.Join(" + ", mc.Ores.Select(o => $"{o.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} {t.DisplayName(o.Item) ?? o.Item}")))
+                        .EndObj();
                 var token = t.GetToken(st.ammo);
                 if (token != null)
                 {

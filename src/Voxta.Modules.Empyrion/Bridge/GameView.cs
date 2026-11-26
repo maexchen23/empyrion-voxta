@@ -296,6 +296,71 @@ public sealed class GameView
         return sb.ToString();
     }
 
+    /// <summary>Answer of POST /mining-contracts: the contract list (lookup) or the player's own contracts (mine).</summary>
+    public static string MiningContractsResult(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True))
+            return Str(r, "error") ?? "Unknown error.";
+        string N(long v) => v.ToString("N0", CultureInfo.InvariantCulture);
+        string Ores(JsonElement c) => string.Join(" + ", Array(c, "ores").Select(o => $"{N(Long(o, "count") ?? 0)} {Str(o, "name")}"));
+        string Pay(JsonElement c) => $"{N(Long(c, "credits") ?? 0)} credits, +{N(Long(c, "reputation") ?? 0)} {Str(c, "faction")} reputation";
+        var contracts = Array(r, "contracts").ToList();
+
+        if (!r.TryGetProperty("found", out var found))
+        {
+            var what = string.Join(", ", new[] { Str(r, "ore"), Str(r, "faction") }.Where(x => x != null).Select(x => $"'{x}'"));
+            if (contracts.Count == 0)
+                return $"No mining contract matches {what}. (Contracts come from Polaris Orbital Refineries; ask without a filter for the full list.)";
+            var sb = new StringBuilder(what.Length > 0 ? $"Mining contracts matching {what} (Polaris Orbital Refineries), best paid first:" : "Mining contracts (Polaris Orbital Refineries), best paid first:");
+            foreach (var c in contracts) sb.Append($"\n- {Str(c, "faction")}: {Ores(c)} -> {Pay(c)}.");
+            if (Long(r, "more") is > 0) sb.Append($"\n(and {N(Long(r, "more")!.Value)} more; filter by ore or faction)");
+            sb.Append($"\n{MiningRules(r)}");
+            return sb.ToString();
+        }
+
+        if (!(found.TryGetProperty("ok", out var fok) && fok.ValueKind == JsonValueKind.True))
+            return Str(found, "error") ?? "Unknown error.";
+        var byToken = contracts.Where(c => Long(c, "token") is not null).GroupBy(c => Long(c, "token")!.Value).ToDictionary(g => g.Key, g => g.First());
+        var tokens = Array(found, "tokens").Where(t => Long(t, "token") is long id && byToken.ContainsKey(id)).GroupBy(t => Long(t, "token")!.Value).ToList();
+        if (tokens.Count == 0)
+            return "The player has no mining contract, neither in the inventory nor in a container in reach. " +
+                   "A Polaris Orbital Refinery hands them out (one every 2 hours per refinery).";
+        var ores = Array(found, "ores").ToList();
+        var o = new StringBuilder("The player's mining contracts:");
+        foreach (var g in tokens)
+        {
+            var c = byToken[g.Key];
+            var inInventory = g.Any(t => Bool(t, "inventory") == true);
+            var where = inInventory ? "in the inventory" :
+                $"in '{Str(g.First(), "where")}' (move it into the inventory to hand it in)";
+            var count = g.Sum(t => Long(t, "count") ?? 0);
+            o.Append($"\n- {Str(c, "name") ?? "Mining contract"}{(count > 1 ? $" x{count}" : "")} for {Str(c, "faction")}, {where}:");
+            foreach (var want in Array(c, "ores"))
+            {
+                var item = Str(want, "item");
+                var need = (Long(want, "count") ?? 0) * count;
+                var here = ores.Where(x => string.Equals(Str(x, "item"), item, StringComparison.OrdinalIgnoreCase)).ToList();
+                var have = here.Sum(x => Long(x, "count") ?? 0);
+                var places = string.Join(", ", here.OrderByDescending(x => Long(x, "count") ?? 0).Take(4).Select(x => $"{Str(x, "where")} {N(Long(x, "count") ?? 0)}"));
+                o.Append($" wants {N(need)} {Str(want, "name")}, {N(have)} in reach{(places.Length > 0 ? $" ({places})" : "")}");
+                o.Append(have >= need ? ", enough;" : $", {N(need - have)} short;");
+            }
+            o.Append($" pays {Pay(c)}.");
+        }
+        o.Append("\nTo hand in: the contract in the player's inventory, the ore into the refinery's quest container, then talk to the refinery.");
+        return o.ToString();
+    }
+
+    private static string MiningRules(JsonElement r)
+    {
+        var rules = r.TryGetProperty("rules", out var x) ? x : default;
+        var hours = rules.ValueKind == JsonValueKind.Object && Long(rules, "cooldownSeconds") is long s and > 0 ? s / 3600.0 : 2;
+        var who = rules.ValueKind == JsonValueKind.Object ? Str(rules, "offerFaction") ?? "Polaris" : "Polaris";
+        return $"A refinery gives one contract per player every {hours.ToString("0.#", CultureInfo.InvariantCulture)} h (game time), " +
+               $"a random one; once the player is Honored with {who}, they can choose the faction. Every contract gives reputation " +
+               "with its faction, also with enemy factions.";
+    }
+
     /// <summary>Answer of POST /quest-pursue.</summary>
     public static string PursueQuestResult(JsonElement r)
     {
@@ -1128,6 +1193,23 @@ public sealed class GameView
                     Str(m, "where"), Bool(m, "followUp") == true, Bool(m, "pursued") == true, Needs(m))).ToList()
                 : null,
             PursuingProgress = Pursuing is { } pq3 && Needs(pq3) is { Count: > 0 } pn ? pn.Select(n => (n, Carried(n))).ToList() : null,
+            HeldContracts = a is { } hc
+                ? Array(hc, "toolbar").Concat(Array(hc, "bag"))
+                    .Where(i => i.TryGetProperty("contract", out var c) && c.ValueKind == JsonValueKind.Object && Long(i, "tokenId") is not null)
+                    .GroupBy(i => Long(i, "tokenId")!.Value)
+                    .Select(g =>
+                    {
+                        var i = g.First();
+                        var c = i.GetProperty("contract");
+                        return new HeldContract(g.Key, (Str(i, "display") ?? "Mining contract").Trim().Trim('"').Trim(), Str(c, "faction") ?? "",
+                            Str(c, "wants") ?? "", Long(c, "credits") ?? 0, Long(c, "reputation") ?? 0, (int)g.Sum(x => Long(x, "count") ?? 0));
+                    }).ToList()
+                : null,
+            ContractOffers = SteamId != null && _root.TryGetProperty("contractOffers", out var co) && co.ValueKind == JsonValueKind.Object &&
+                             co.TryGetProperty(SteamId, out var myOffers) && myOffers.ValueKind == JsonValueKind.Array
+                ? myOffers.EnumerateArray().Select(o => new ContractOffer(Str(o, "key") ?? "", Long(o, "value") ?? 0, Str(o, "where"))).ToList()
+                : null,
+            Credits = a is { } cr ? Long(cr, "credits") : null,
             FactoryBlueprint = a is { } f1 && f1.TryGetProperty("factory", out var fac) ? Str(fac, "blueprint") : null,
             FactoryRemainingS = a is { } f2 && f2.TryGetProperty("factory", out var fac2) ? Get(fac2, "remainingS") : null,
         };

@@ -342,10 +342,47 @@ namespace VoxtaBridge
         /// until another one is pursued or it is cleared), and <c>missions.&lt;steamId&gt;</c> = the open missions
         /// [{key, kind, line, where, followUp?, pursued?}] (key = trader + mission number, so a new follow-up at the same trader is a new key).
         /// </summary>
+        /// <summary>
+        /// The player's mining contract offers: one row per refinery that gave them a contract (the cooldown variable, its
+        /// value changes with every contract given): [{key, value, where}].
+        /// </summary>
+        static string ReadContractOffers(string db, int playerId, string cooldownVar)
+        {
+            var j = new Json().Arr();
+            using (var c = new SqliteConnection($"Data Source={db};Read Only=True;"))
+            {
+                c.Open();
+                var rows = new List<(string state, long value)>();
+                using (var q = c.CreateCommand())
+                {
+                    q.CommandText = "SELECT state, value FROM DialogueVars WHERE type = 110 AND entityid = @p AND name = @n";
+                    q.Parameters.AddWithValue("@p", playerId);
+                    q.Parameters.AddWithValue("@n", cooldownVar);
+                    using (var r = q.ExecuteReader())
+                        while (r.Read()) rows.Add((r[0] as string ?? "", r[1] is DBNull ? 0 : Convert.ToInt64(r[1])));
+                }
+                foreach (var (state, value) in rows)
+                {
+                    string where = null;
+                    var dash = state.IndexOf('-');
+                    if (dash > 0 && long.TryParse(state.Substring(0, dash), out var poi))
+                        using (var q = c.CreateCommand())
+                        {
+                            q.CommandText = "SELECT e.name, p.name FROM Entities e JOIN Playfields p ON p.pfid = e.pfid WHERE e.entityid = @e";
+                            q.Parameters.AddWithValue("@e", poi);
+                            using (var r = q.ExecuteReader())
+                                if (r.Read()) where = $"{r[0] as string} ({r[1] as string})";
+                        }
+                    j.Obj().Prop("key", state).Prop("value", value).Prop("where", where).EndObj();
+                }
+            }
+            return j.EndArr().ToString();
+        }
+
         static void WriteQuestStatus(Json j, IEnumerable<DediPlayer> online)
         {
             var save = SaveGameDir();
-            var rows = new List<(string steamId, string pursuing, string missions)>();
+            var rows = new List<(string steamId, string pursuing, string missions, string offers)>();
             foreach (var p in online)
             {
                 if (p.SteamId == null) continue;
@@ -354,7 +391,7 @@ namespace VoxtaBridge
                 lock (pursuedQuests) fresh = pursuedCache.TryGetValue(p.SteamId, out cached) && DateTime.UtcNow - cached.at < TimeSpan.FromSeconds(10);
                 if (!fresh && save != null)
                 {
-                    string pursuing = null, missions;
+                    string pursuing = null, missions, offers = null;
                     try
                     {
                         var quests = ReadQuests(Path.Combine(save, "global.db"), p.EntityId);
@@ -383,24 +420,29 @@ namespace VoxtaBridge
                             mj.EndObj();
                         }
                         missions = mj.EndArr().ToString();
+                        if (miningContracts?.CooldownVar is string cv) offers = ReadContractOffers(Path.Combine(save, "global.db"), p.EntityId, cv);
                     }
                     catch (Exception e)
                     {
                         pursuing = PursuedPoi(p.SteamId) == null ? null : new Json().Obj().Prop("status", "error").Prop("line", "global.db: " + e.Message).EndObj().ToString();
                         missions = null; // unknown: the module keeps its last list, so nothing reads as new
                     }
-                    cached = (DateTime.UtcNow, (pursuing ?? "") + "\u0001" + (missions ?? ""));
+                    cached = (DateTime.UtcNow, (pursuing ?? "") + "\u0001" + (missions ?? "") + "\u0001" + (offers ?? ""));
                     lock (pursuedQuests) pursuedCache[p.SteamId] = cached;
                 }
                 if (cached.json == null) continue;
                 var parts = cached.json.Split('\u0001');
-                rows.Add((p.SteamId, parts[0].Length > 0 ? parts[0] : null, parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null));
+                rows.Add((p.SteamId, parts[0].Length > 0 ? parts[0] : null, parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null,
+                    parts.Length > 2 && parts[2].Length > 0 ? parts[2] : null));
             }
             j.Key("pursuing").Obj();
             foreach (var r in rows.Where(r => r.pursuing != null)) j.Key(r.steamId).Raw(r.pursuing);
             j.EndObj();
             j.Key("missions").Obj();
             foreach (var r in rows.Where(r => r.missions != null)) j.Key(r.steamId).Raw(r.missions);
+            j.EndObj();
+            j.Key("contractOffers").Obj();
+            foreach (var r in rows.Where(r => r.offers != null)) j.Key(r.steamId).Raw(r.offers);
             j.EndObj();
         }
     }

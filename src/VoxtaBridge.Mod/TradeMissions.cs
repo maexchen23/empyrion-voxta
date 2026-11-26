@@ -84,7 +84,7 @@ namespace VoxtaBridge
         static readonly Regex FollowUpIf = new Regex(@"CanTrade\s*<\s*(\d+)", RegexOptions.Compiled);
         static readonly Regex GinSale = new Regex(@"Player\.Credit\s*-=\s*(\d+)\s*;.*AddItem\('Token',\s*1,\s*(\d+)\)", RegexOptions.Compiled);
 
-        sealed class Block
+        internal sealed class Block
         {
             public string Name;
             public List<(string key, string value)> Lines = new List<(string, string)>();
@@ -98,7 +98,7 @@ namespace VoxtaBridge
             }
         }
 
-        static List<Block> ReadBlocks(TextReader reader)
+        internal static List<Block> ReadBlocks(TextReader reader)
         {
             var list = new List<Block>();
             Block cur = null;

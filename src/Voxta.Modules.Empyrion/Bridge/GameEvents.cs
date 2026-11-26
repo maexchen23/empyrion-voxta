@@ -155,6 +155,33 @@ public static class GameEvents
             }
         }
 
+        // Mining contracts. New: a refinery's offer row for the player changed (it changes with every contract given; moving
+        // the token between the inventory and containers doesn't touch it). Handed in: a contract token left the inventory
+        // and the credits rose by at least its pay (moving it into a container doesn't pay).
+        if (prev.ContractOffers is { } offersBefore && next.ContractOffers is { } offersNow)
+        {
+            var was = offersBefore.ToDictionary(o => o.Key, o => o.Value);
+            foreach (var o in offersNow.Where(o => !was.TryGetValue(o.Key, out var v) || v != o.Value))
+            {
+                var gained = next.HeldContracts?.FirstOrDefault(h => h.Count > (prev.HeldContracts?.FirstOrDefault(p => p.Token == h.Token)?.Count ?? 0));
+                var what = gained is null ? "a mining contract" : $"{gained.Name} for {gained.Faction}: {gained.Wants} for {gained.Credits.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} credits";
+                var speak = config.ModeOf("new_mining_contract") == GameEventSettings.On;
+                events.Add(new("NewMiningContract",
+                    $"The player just took {what}{(o.Where is { } w ? $" at {w}" : "")}." +
+                    (speak ? " Mention it briefly; empyrion_mining_contracts with mine=yes shows how much of the ore is in reach." : ""),
+                    speak, Id: "new_mining_contract"));
+            }
+        }
+        if (prev.HeldContracts is { } heldBefore && next.HeldContracts is { } heldNow && prev.Credits is { } c0 && next.Credits is { } c1)
+            foreach (var h in heldBefore)
+            {
+                var left = h.Count - (heldNow.FirstOrDefault(x => x.Token == h.Token)?.Count ?? 0);
+                if (left <= 0 || c1 - c0 < h.Credits) continue;
+                events.Add(new("MiningContractDone",
+                    $"The player handed in {h.Name} for {h.Faction}: {h.Credits.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} credits and {h.Reputation.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} {h.Faction} reputation.",
+                    config.ModeOf("mining_contract_done") == GameEventSettings.On, Id: "mining_contract_done"));
+            }
+
         // new ships and bases: each id once (the bridge lists it for a minute)
         var knownNew = prev.NewStructures.Select(n => n.Id).ToHashSet();
         foreach (var n in next.NewStructures.Where(n => !knownNew.Contains(n.Id)))

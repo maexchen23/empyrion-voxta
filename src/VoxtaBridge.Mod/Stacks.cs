@@ -32,11 +32,12 @@ namespace VoxtaBridge
         /// so full stacks stay full), splitting a stack when needed. Returns the taken stacks with their state;
         /// <paramref name="list"/> is modified in place (emptied stacks removed).
         /// </summary>
-        public static List<InvStack> Take(List<InvStack> list, int itemId, int amount)
+        public static List<InvStack> Take(List<InvStack> list, int itemId, int amount, int? token = null)
         {
             var taken = new List<InvStack>();
             var got = 0;
-            foreach (var i in Enumerable.Range(0, list.Count).Where(i => list[i].Id == itemId).OrderBy(i => list[i].Count).ToList())
+            foreach (var i in Enumerable.Range(0, list.Count).Where(i => list[i].Id == itemId && (token == null || list[i].Ammo == token))
+                         .OrderBy(i => list[i].Count).ToList())
             {
                 if (got >= amount) break;
                 var st = list[i];

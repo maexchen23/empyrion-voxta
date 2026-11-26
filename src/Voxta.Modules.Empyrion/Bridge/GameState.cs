@@ -11,6 +11,12 @@ public sealed record OpenMission(string Key, string Kind, string Line, string? W
     IReadOnlyList<MissionNeed>? Needs = null);
 
 /// <summary>A ship or base that just came into being: kind "blueprint" (spawned from one) or "starter" (starter block placed).</summary>
+/// <summary>A mining contract token in the player's inventory: token id, name, faction, what it wants, the pay, how many.</summary>
+public sealed record HeldContract(long Token, string Name, string Faction, string Wants, long Credits, long Reputation, int Count);
+
+/// <summary>One refinery's contract offer row for the player: its value changes whenever the refinery gives a contract.</summary>
+public sealed record ContractOffer(string Key, long Value, string? Where);
+
 public sealed record NewStructure(int Id, string Name, string Type, string Kind, string? Blueprint);
 
 /// <summary>Compact game state of one player, taken from one bridge poll.</summary>
@@ -80,6 +86,12 @@ public sealed record GameState
     public bool PursuingReady => PursuingStatus is "open" or "locked" && PursuingProgress is { Count: > 0 } pr && pr.All(x => x.Have >= x.Need.Count);
     /// <summary>The player's open trader missions (null = not known this poll, e.g. an older bridge).</summary>
     public IReadOnlyList<OpenMission>? OpenMissions { get; init; }
+
+    /// <summary>Mining contract tokens in the player's inventory (bag + toolbar); null = no inventory data this poll.</summary>
+    public IReadOnlyList<HeldContract>? HeldContracts { get; init; }
+    /// <summary>The player's refinery contract offers (null = not known this poll).</summary>
+    public IReadOnlyList<ContractOffer>? ContractOffers { get; init; }
+    public long? Credits { get; init; }
 
     public string? FactoryBlueprint { get; init; }
     public double? FactoryRemainingS { get; init; }

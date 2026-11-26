@@ -108,6 +108,8 @@ namespace VoxtaBridge
                 ("ownership", config.RequireOwnership ? "1" : "0"),
                 ("range", config.TransferRangeMeters.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             };
+            var drops = questDropNames;
+            if (drops != null && drops.Length > 0) all.Add(("drops", string.Join(",", drops)));
             all.AddRange(fields);
             var packet = Form.Encode(all.ToArray());
             lock (sync) dediOutbox.Enqueue((player.Playfield, Encoding.UTF8.GetBytes(RequestPrefix + packet)));
@@ -208,6 +210,8 @@ namespace VoxtaBridge
                 }
                 string result;
                 lastResolved = null;
+                if (req.Get("drops") is string dropList)
+                    questDrops = new HashSet<string>(dropList.Split(',').Select(n => n.Trim()).Where(n => n.Length > 0), StringComparer.OrdinalIgnoreCase);
                 try
                 {
                     switch (req.Get("op"))
@@ -217,6 +221,7 @@ namespace VoxtaBridge
                         case "put": result = ExecutePut(req); break;
                         case "probe": result = ExecuteProbe(req); break;
                         case "find": result = ExecuteFind(req); break;
+                        case "mining-scan": result = ExecuteMiningScan(req); break;
                         case "craft": result = ExecuteCraft(req); break;
                         case "jump": result = ExecuteJump(req); break;
                         case "microjump": result = ExecuteMicroJump(req); break;
@@ -282,14 +287,14 @@ namespace VoxtaBridge
                     return Error($"No container '{from}'. Containers: {string.Join(", ", all.Select(c => c.Label))}.");
             }
 
-            var candidates = sources.Where(s => s != target).SelectMany(s => s.ItemIds()).Distinct().ToList();
-            var itemId = Transfers.ResolveItem(req.Get("item"), candidates, ItemName,
-                id => gameText?.DisplayName(ItemName(id)), out var itemError);
-            if (itemId == 0) return Error(itemError);
+            var choice = Transfers.ResolveChoice(req.Get("item"), ChoicesIn(sources.Where(s => s != target)), out var itemError);
+            if (choice == null) return Error(itemError);
+            var itemId = choice.Id;
+            var token = choice.Token;
 
             var internalName = ItemName(itemId);
-            var display = gameText?.DisplayName(internalName) ?? internalName;
-            var stackMode = Transfers.NeedsStackMode(itemId, sources, gameText?.IsToken(internalName) ?? false);
+            var display = choice.Display ?? internalName;
+            var stackMode = token != null || Transfers.NeedsStackMode(itemId, sources, gameText?.IsToken(internalName) ?? false);
             if (target is TankContainer tankTarget)
             {
                 if (stackMode) return Error($"{display} can't go into a tank.");
@@ -307,7 +312,7 @@ namespace VoxtaBridge
             if (max <= 0) max = 10000;
 
             var r = stackMode
-                ? Transfers.MoveStacks(itemId, amount, target, sources, max, StackSizeOf)
+                ? Transfers.MoveStacks(itemId, amount, target, sources, max, StackSizeOf, token)
                 : Transfers.Move(itemId, amount, target, sources, max);
             Log($"transfer: player {player.Name} {display} x{amountText} -> {target.Label}: " +
                 (r.Ok ? $"moved {r.Moved}" : $"failed: {r.Error}") + (r.Note != null ? $" ({r.Note})" : ""));
@@ -327,6 +332,27 @@ namespace VoxtaBridge
                 api.LogError($"[{ModName}] transfer LOST {r.Lost} x {display} (player {player.Name}, to {target.Label})");
             }
             return j.EndObj().ToString();
+        }
+
+        /// <summary>A token's name from the token list ("Mining Contract: Cobalt"; the localization escapes the quotes around it).</summary>
+        static string TokenName(int tokenId) =>
+            gameText?.GetToken(tokenId)?.Name is string n ? n.Replace("\\\"", "\"").Trim().Trim('"').Trim() : null;
+
+        /// <summary>The items and token kinds in some stacks, for lookups by name.</summary>
+        static List<Transfers.ItemChoice> ChoicesIn(IEnumerable<InvStack> stacks) =>
+            Transfers.Choices(stacks, ItemName, id => gameText?.DisplayName(ItemName(id)), id => gameText?.IsToken(ItemName(id)) == true, TokenName);
+
+        /// <summary>The items and token kinds in containers; stacks are read only where a token is (to tell the kinds apart).</summary>
+        static List<Transfers.ItemChoice> ChoicesIn(IEnumerable<ITransferContainer> containers)
+        {
+            var stacks = new List<InvStack>();
+            foreach (var c in containers)
+                foreach (var id in c.ItemIds())
+                {
+                    if (gameText?.IsToken(ItemName(id)) == true) stacks.AddRange(c.GetStacks().Where(st => st.Id == id));
+                    else stacks.Add(new InvStack(id, Math.Max(1, c.Count(id))));
+                }
+            return ChoicesIn(stacks);
         }
 
         static int StackSizeOf(int itemId) => gameText?.StackSize(ItemName(itemId)) ?? Stacks.DefaultStackSize;
@@ -586,6 +612,17 @@ namespace VoxtaBridge
                     if (isRange) timing.RangeContainerCount += found.Count - before;
                     else timing.GroupContainerCount += found.Count - before;
                 }
+            }
+
+            // A quest POI's hand-in container (e.g. "CargoDrop"), only while the player is in that POI: the game makes it
+            // public, so it is treated like the player's own containers.
+            var drops = questDrops;
+            var poi = player == null || drops.Count == 0 ? null : ForeignStructureFor(player);
+            if (poi != null && !included.Contains(poi.Id))
+            {
+                var poiContainers = new List<GameContainer>();
+                AddContainers(poiContainers, pf, poi, string.IsNullOrWhiteSpace(poi.Entity?.Name) ? $"structure {poi.Id}" : poi.Entity.Name.Trim());
+                found.AddRange(poiContainers.Where(c => c.Name != null && drops.Contains(c.Name.Trim())));
             }
 
             var labels = Transfers.MakeLabels(found.Select(c => (c.Name, c.Kind, c.Vessel)).ToList());

@@ -25,7 +25,7 @@ switches your ships on her own when you set a watch, all through the bridge. Mor
 - **Know where you are**: playfield, system, health, oxygen, food, your ship and its tanks, the closest trading places,
   bases and dungeons, your own ships nearby.
 - **Cargo**: find items across your ships and bases in range, move items between containers and your inventory,
-  "give me 10 mags for my rifle".
+  "give me 10 mags for my rifle". Tokens (contracts, work orders) go by their own names.
 - **Crafting**: crafts from a container you mark with `VC` in its name, using the game's own recipes, incl. "make sure I
   have 500 rounds".
 - **Trading**: where to buy an item (known sellers, planets and stars where such a trader can be), what a trading place
@@ -34,6 +34,9 @@ switches your ships on her own when you set a watch, all through the bridge. Mor
   planet descriptions.
 - **Trader missions**: remembers the missions factories and shops gave you (the game doesn't track them), what they
   want, rewards and work orders; keeps one you pursue in view and counts its items in your inventory.
+- **Mining contracts** (Reforged Eden 2 Orbital Refineries): knows every contract ("does anyone want magnesium?"),
+  checks the contracts you carry against the ore in reach, and fills a quest POI's hand-in container while you are
+  inside that POI.
 - **Galaxy map**: marks systems (also as a numbered warp route), adds markers you keep.
 - **Micro jump**: short jumps of the ship you fly, paid with Refined Pentaxid from the ship's pentaxid tank.
 - **Ship control**: switches main power, the shield, signals (control panel and switches) and named devices or device

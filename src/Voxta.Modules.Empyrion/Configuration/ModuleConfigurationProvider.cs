@@ -37,6 +37,7 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         new(EmpyrionConstants.PoiTerminalTool, "Read A POI's Info Terminal"),
         new(EmpyrionConstants.ListQuestsTool, "List Trader Missions"),
         new(EmpyrionConstants.PursueQuestTool, "Pursue A Trader Mission"),
+        new(EmpyrionConstants.MiningContractsTool, "Mining Contracts"),
         new(EmpyrionConstants.SendToChatTool, "Write To The Game Chat"),
         new(EmpyrionConstants.MarkStarsTool, "Mark Stars On The Galaxy Map"),
         new(EmpyrionConstants.ClearMarksTool, "Clear Galaxy Map Marks"),

@@ -82,11 +82,12 @@ namespace VoxtaBridge
         public static int CountIn(IEnumerable<InvStack> stacks, int itemId) => stacks.Where(s => s.Id == itemId).Sum(s => s.Count);
 
         /// <summary>Bag first, then toolbar (smaller stacks first); returns the taken stacks with their state.</summary>
-        public static List<InvStack> TakeFromInventory(List<InvStack> bag, List<InvStack> toolbar, int itemId, int amount, bool useBag, bool useToolbar)
+        public static List<InvStack> TakeFromInventory(List<InvStack> bag, List<InvStack> toolbar, int itemId, int amount, bool useBag, bool useToolbar,
+            int? token = null)
         {
             var taken = new List<InvStack>();
-            if (useBag) taken.AddRange(Stacks.Take(bag, itemId, amount));
-            if (useToolbar) taken.AddRange(Stacks.Take(toolbar, itemId, amount - Stacks.Total(taken)));
+            if (useBag) taken.AddRange(Stacks.Take(bag, itemId, amount, token));
+            if (useToolbar) taken.AddRange(Stacks.Take(toolbar, itemId, amount - Stacks.Total(taken), token));
             return taken;
         }
 
@@ -102,11 +103,13 @@ namespace VoxtaBridge
         /// anywhere: the caller hands the items on (to the player) and must give back what it can't place.
         /// <see cref="TransferResult.Stacks"/> holds what was taken (with state in stack mode).
         /// </summary>
-        public static TransferResult RemoveOnly(int itemId, int amount, IList<ITransferContainer> sources, int maxPerTransfer, bool stackMode = false)
+        public static TransferResult RemoveOnly(int itemId, int amount, IList<ITransferContainer> sources, int maxPerTransfer, bool stackMode = false,
+            int? token = null)
         {
+            if (token != null) stackMode = true;
             var usable = sources.Where(s => !s.Locked).ToList();
-            var lockedWithItem = sources.Where(s => s.Locked && s.Count(itemId) > 0).Select(s => s.Label).ToList();
-            var available = usable.Sum(s => s.Count(itemId));
+            var lockedWithItem = sources.Where(s => s.Locked && CountOf(s, itemId, token) > 0).Select(s => s.Label).ToList();
+            var available = usable.Sum(s => CountOf(s, itemId, token));
             if (available == 0)
                 return TransferResult.Fail(lockedWithItem.Count > 0 ? OpenMessage(lockedWithItem, "source") : "None of that item in the source container(s).");
 
@@ -120,14 +123,14 @@ namespace VoxtaBridge
             foreach (var src in usable)
             {
                 if (r.Moved >= want) break;
-                var take = Math.Min(want - r.Moved, src.Count(itemId));
+                var take = Math.Min(want - r.Moved, CountOf(src, itemId, token));
                 if (take <= 0) continue;
                 var before = src.Count(itemId);
                 if (stackMode)
                 {
                     var stacks = src.GetStacks();
                     var original = stacks.ToList();
-                    var taken = Stacks.Take(stacks, itemId, take);
+                    var taken = Stacks.Take(stacks, itemId, take, token);
                     src.SetStacks(stacks);
                     if (before - src.Count(itemId) != Stacks.Total(taken))
                     {
@@ -203,12 +206,12 @@ namespace VoxtaBridge
         /// Each source step is verified by counting both sides; on a mismatch both containers are restored.
         /// </summary>
         public static TransferResult MoveStacks(int itemId, int amount, ITransferContainer target,
-            IList<ITransferContainer> sources, int maxPerTransfer, Func<int, int> stackSize)
+            IList<ITransferContainer> sources, int maxPerTransfer, Func<int, int> stackSize, int? token = null)
         {
             if (target.Locked) return TransferResult.Fail(OpenMessage(new[] { target.Label }, "target"));
             var usable = sources.Where(s => s != target && !s.Locked).ToList();
-            var lockedWithItem = sources.Where(s => s != target && s.Locked && s.Count(itemId) > 0).Select(s => s.Label).ToList();
-            var available = usable.Sum(s => s.Count(itemId));
+            var lockedWithItem = sources.Where(s => s != target && s.Locked && CountOf(s, itemId, token) > 0).Select(s => s.Label).ToList();
+            var available = usable.Sum(s => CountOf(s, itemId, token));
             if (available == 0)
                 return TransferResult.Fail(lockedWithItem.Count > 0 ? OpenMessage(lockedWithItem, "source") : "None of that item in the source container(s).");
 
@@ -229,7 +232,7 @@ namespace VoxtaBridge
                 var srcBefore = src.Count(itemId);
                 var tgtBefore = target.Count(itemId);
 
-                var taken = Stacks.Take(srcStacks, itemId, want - r.Moved);
+                var taken = Stacks.Take(srcStacks, itemId, want - r.Moved, token);
                 if (taken.Count == 0) continue;
                 var notPlaced = Stacks.Place(tgtStacks, taken, target.MaxSlots, stackSize);
                 // what didn't fit goes straight back into the source list (same slots were freed by Take)
@@ -393,6 +396,98 @@ namespace VoxtaBridge
         /// All item ids matching a search (find_item): exact internal/display names win; otherwise every item whose
         /// display or internal name contains the text (ignoring spaces/dashes). Several results are fine here.
         /// </summary>
+        /// <summary>
+        /// How much of an item a container holds; with <paramref name="token"/> only the stacks of that token id
+        /// (every token is the item "Token", its kind is the stack's ammo field).
+        /// </summary>
+        public static int CountOf(ITransferContainer c, int itemId, int? token) =>
+            token == null ? c.Count(itemId) : c.GetStacks().Where(st => st.Id == itemId && st.Ammo == token).Sum(st => st.Count);
+
+        /// <summary>
+        /// One thing the player can ask for by name: an item, or one kind of token (item "Token" + token id, named from
+        /// the token list, e.g. "Mining Contract: Cobalt").
+        /// </summary>
+        public sealed class ItemChoice
+        {
+            public int Id;
+            public int? Token;
+            public string Internal, Display;
+            public bool Covers(InvStack st) => st.Id == Id && (Token == null || st.Ammo == Token);
+        }
+
+        /// <summary>The items and token kinds in some stacks (tokens split by token id).</summary>
+        public static List<ItemChoice> Choices(IEnumerable<InvStack> stacks, Func<int, string> internalName, Func<int, string> displayName,
+            Func<int, bool> isToken, Func<int, string> tokenName)
+        {
+            var list = new List<ItemChoice>();
+            foreach (var g in stacks.Where(st => st.Count > 0).GroupBy(st => st.Id))
+            {
+                var internalN = internalName(g.Key);
+                if (isToken(g.Key))
+                    foreach (var t in g.Select(st => st.Ammo).Distinct())
+                        list.Add(new ItemChoice { Id = g.Key, Token = t, Internal = internalN,
+                            Display = tokenName(t) ?? $"{displayName(g.Key) ?? internalN ?? "Token"} #{t}" });
+                else
+                    list.Add(new ItemChoice { Id = g.Key, Internal = internalN, Display = displayName(g.Key) });
+            }
+            return list;
+        }
+
+        /// <summary>Like <see cref="MatchItems"/>, over items and token kinds.</summary>
+        public static List<ItemChoice> MatchChoices(string spec, IEnumerable<ItemChoice> choices)
+        {
+            var list = choices.ToList();
+            if (string.IsNullOrWhiteSpace(spec)) return new List<ItemChoice>();
+            spec = spec.Trim();
+            string Squash(string s) => s?.Replace(" ", "").Replace("-", "").Replace("_", "").Replace(":", "");
+            var exact = list.Where(c => string.Equals(c.Internal, spec, StringComparison.OrdinalIgnoreCase)
+                                     || string.Equals(c.Display, spec, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (exact.Count > 0) return exact;
+            var q = Squash(spec);
+            var hits = list.Where(c => (Squash(c.Display)?.IndexOf(q, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0
+                                    || (Squash(c.Internal)?.IndexOf(q, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0).ToList();
+            if (hits.Count > 0) return hits;
+            // all words in any order ("cobalt contract" → "Mining Contract: Cobalt")
+            var words = spec.Split(new[] { ' ', ':', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+            return words.Length < 2 ? hits : list.Where(c => words.All(w =>
+                (c.Display?.IndexOf(w, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0 || (c.Internal?.IndexOf(w, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0)).ToList();
+        }
+
+        /// <summary>Like <see cref="ResolveItem"/>, over items and token kinds: exactly one, or an error naming the candidates.</summary>
+        public static ItemChoice ResolveChoice(string spec, IEnumerable<ItemChoice> choices, out string error)
+        {
+            error = null;
+            if (string.IsNullOrWhiteSpace(spec)) { error = "No item given."; return null; }
+            spec = spec.Trim();
+            var list = choices.ToList();
+            string Show(ItemChoice c) => c.Display ?? c.Internal ?? $"item #{c.Id}";
+            string Squash(string x) => x?.Replace(" ", "").Replace("-", "").Replace("_", "").Replace(":", "");
+            bool Has(string text, string part) => (text?.IndexOf(part, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+            var words = spec.Split(new[] { ' ', ':', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+            // same order as ResolveItem, plus "all words in any order" ("cobalt contract" → "Mining Contract: Cobalt")
+            var steps = new Func<ItemChoice, bool>[]
+            {
+                c => string.Equals(c.Internal, spec, StringComparison.OrdinalIgnoreCase),
+                c => string.Equals(c.Display, spec, StringComparison.OrdinalIgnoreCase),
+                c => string.Equals(Squash(c.Display), Squash(spec), StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(Squash(c.Internal), Squash(spec), StringComparison.OrdinalIgnoreCase),
+                c => Has(c.Display, spec) || Has(c.Internal, spec),
+                c => words.Length > 1 && words.All(w => Has(c.Display, w) || Has(c.Internal, w)),
+            };
+            foreach (var step in steps)
+            {
+                var hit = list.Where(step).ToList();
+                if (hit.Count == 1) return hit[0];
+                if (hit.Count > 1)
+                {
+                    error = $"'{spec}' matches several items: {string.Join(", ", hit.Select(Show).Distinct())}. Say which one.";
+                    return null;
+                }
+            }
+            error = $"No '{spec}' found in the source container(s).";
+            return null;
+        }
+
         public static List<int> MatchItems(string spec, IEnumerable<int> candidates, Func<int, string> internalName, Func<int, string> displayName)
         {
             var ids = candidates.Distinct().ToList();

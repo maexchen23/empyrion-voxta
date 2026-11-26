@@ -49,4 +49,28 @@ public class RealFilesTests(ITestOutputHelper output)
         Assert.Equal((250, true), t.Magazine("MinigunEpic", "PulseLaserChargeSS"));
         Assert.Equal((20, true), t.Magazine("LaserRifle", "PulseLaserChargeRifle"));
     }
+
+    [Fact]
+    public void Real_files_mining_contracts()
+    {
+        var scenario = Environment.GetEnvironmentVariable("GAMETEXT_SCENARIO");
+        var dlg = string.IsNullOrEmpty(scenario) ? null : Path.Combine(scenario, "Content", "Configuration", "Dialogues.ecf");
+        if (dlg == null || !File.Exists(dlg)) return;
+        var m = new MiningContracts();
+        using (var r = new StreamReader(dlg)) m.LoadDialogues(r);
+        foreach (var c in m.All)
+            output.WriteLine($"{c.TokenId} {c.Faction}: {string.Join(" + ", c.Ores.Select(o => $"{o.Count} {o.Item}"))} -> {c.Credits} CR, +{c.Reputation}");
+        output.WriteLine($"cooldown {m.CooldownSeconds} s, offers by {m.OfferFaction} reputation, faction choice from {m.ChoiceFromTier}");
+        Assert.True(m.Count >= 28);
+        var mag = Assert.Single(m.Find("Magnesium", null, null));
+        Assert.Equal(("Zirax Empire", 8000, 800000), (mag.Faction, mag.Ores[0].Count, mag.Credits));
+        Assert.Equal(7200, m.CooldownSeconds);
+        Assert.Equal("HonoredMin", m.ChoiceFromTier);
+        using (var r = new StreamReader(dlg))
+        {
+            var drops = MiningContracts.DropContainerNames(r);
+            output.WriteLine("hand-in containers: " + string.Join(", ", drops));
+            Assert.Contains("CargoDrop", drops);
+        }
+    }
 }

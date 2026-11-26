@@ -64,19 +64,20 @@ namespace VoxtaBridge
             var contents = all.Select(c => (c, stacks: c.GetStacks())).ToList();
             var bag = Stacks.Decode(req.Get("bag"));
             var toolbar = Stacks.Decode(req.Get("toolbar"));
-            var candidates = contents.SelectMany(x => x.stacks.Select(st => st.Id)).Concat(bag.Select(b => b.Id)).Concat(toolbar.Select(t => t.Id));
-            var ids = Transfers.MatchItems(req.Get("item"), candidates, ItemName, id => gameText?.DisplayName(ItemName(id)));
+            // items and token kinds (every token is the item "Token"; its kind, e.g. "Mining Contract: Cobalt", is the token id)
+            var choices = Transfers.MatchChoices(req.Get("item"), ChoicesIn(contents.SelectMany(x => x.stacks).Concat(bag).Concat(toolbar)));
             scan.Stop();
 
             var j = new Json().Obj().Prop("ok", true).Prop("query", req.Get("item"));
             j.Key("items").Arr();
-            foreach (var id in ids)
+            foreach (var choice in choices)
             {
-                var name = gameText?.DisplayName(ItemName(id)) ?? ItemName(id) ?? $"item #{id}";
+                var id = choice.Id;
+                var name = choice.Display ?? ItemName(id) ?? $"item #{id}";
                 var where = new List<(string label, int count, bool open, double? dist, List<InvStack> states)>();
                 void From(string label, List<InvStack> stacks, bool open, double? dist)
                 {
-                    var mine = stacks.Where(st => st.Id == id).ToList();
+                    var mine = stacks.Where(choice.Covers).ToList();
                     var n = Stacks.Total(mine);
                     if (n > 0) where.Add((label, n, open, dist, mine.Where(st => st.HasState).ToList()));
                 }
@@ -87,6 +88,7 @@ namespace VoxtaBridge
 
                 j.Obj().Prop("id", id).Prop("name", name).Prop("total", where.Sum(w => w.count));
                 if (gameText?.IsToken(ItemName(id)) == true) j.Prop("token", true);
+                if (choice.Token != null) j.Prop("tokenId", choice.Token.Value);
                 j.Key("locations").Arr();
                 foreach (var w in where.OrderBy(w => w.dist ?? 0))
                 {
@@ -106,7 +108,7 @@ namespace VoxtaBridge
             j.EndArr();
             total.Stop();
 
-            var line = $"find '{req.Get("item")}': {ids.Count} item(s); structures {timing.GroupStructures} in group + {timing.RangeStructures} in range " +
+            var line = $"find '{req.Get("item")}': {choices.Count} item(s); structures {timing.GroupStructures} in group + {timing.RangeStructures} in range " +
                        $"({timing.StructuresChecked} checked for distance); containers {timing.GroupContainerCount} group + {timing.RangeContainerCount} range; " +
                        $"group containers {timing.GroupContainers.ElapsedMilliseconds} ms, range lookup {timing.RangeLookup.ElapsedMilliseconds} ms, " +
                        $"range containers {timing.RangeContainers.ElapsedMilliseconds} ms, scan {scan.ElapsedMilliseconds} ms, total {total.ElapsedMilliseconds} ms";

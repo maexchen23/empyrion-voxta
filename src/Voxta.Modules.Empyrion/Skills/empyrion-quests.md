@@ -1,9 +1,9 @@
 ---
 name: empyrion-quests
-description: "Trader missions: factories that want items before they trade, work orders, follow-up jobs, and the one mission the player pursues. Load when the player talks about a factory's request, a mission, what a trader wanted, or why a factory won't trade."
+description: "Trader missions (factories that want items before they trade, work orders, follow-up jobs, the one mission the player pursues) and mining contracts from Orbital Refineries. Load when the player talks about a factory's request, a mission, what a trader wanted, why a factory won't trade, or mining contracts."
 metadata:
   augmentations: empyrion
-  tools: empyrion_list_quests empyrion_pursue_quest empyrion_where_to_buy empyrion_find_item empyrion_transfer_items
+  tools: empyrion_list_quests empyrion_pursue_quest empyrion_mining_contracts empyrion_where_to_buy empyrion_find_item empyrion_transfer_items
 ---
 
 # Trader missions
@@ -32,3 +32,21 @@ metadata:
   New: say what it wants in a sentence and offer to keep track of it; don't push. Done: a short well done, and
   mention when the factory trades now.
 - Keep it short: name the factory, what it wants and the reward or work-order price; details only when asked.
+
+## Mining contracts
+
+- Polaris **Orbital Refineries** hand out mining contracts: a token ("Mining Contract: Iron") that a faction pays for
+  when the player delivers an amount of one ore. `empyrion_mining_contracts` knows every contract (which faction wants
+  how much of which ore, the credits and reputation): use it for "does anyone want magnesium?" or "who pays most for
+  titanium?" instead of guessing.
+- "Can I turn in a contract?": call it with `mine` = yes. It lists the player's contract tokens (inventory or containers
+  in reach) and how much of the wanted ore is in reach, and what is still missing.
+- Hand-in: the **contract token must be in the player's inventory** (it unlocks the dialogue option), the **ore goes
+  into the refinery's quest container**, then the player talks to the refinery. Offer to move a token from a container
+  into the inventory with empyrion_transfer_items.
+- Pay per ore is the same for every faction; factions ask for different amounts. Every contract gives reputation with
+  its faction, also with enemy factions (e.g. the Zirax), which is a way to mend relations.
+- A refinery gives each player one contract every 2 hours of game time, a random one; once the player is Honored with
+  Polaris, they can choose the faction.
+- When the player takes a contract or hands one in, you may be told (silently by default, per the module settings).
+  On a new one, the check with `mine` = yes shows what is still missing; on a hand-in, a short well done is enough.

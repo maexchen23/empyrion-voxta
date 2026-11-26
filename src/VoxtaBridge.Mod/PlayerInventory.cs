@@ -257,12 +257,12 @@ namespace VoxtaBridge
             if (inv == null) return (200, Error(err));
             var bag = ToStacks(inv.bag);
             var toolbar = ToStacks(inv.toolbelt);
-            var candidates = (useBag ? bag : new List<InvStack>()).Concat(useToolbar ? toolbar : new List<InvStack>())
-                .Select(s => s.Id).Distinct().ToList();
-            var itemId = Transfers.ResolveItem(f.Get("item"), candidates, ItemName, id => gameText?.DisplayName(ItemName(id)), out var itemError);
-            if (itemId == 0) return (200, Error(itemError.Replace("source container(s)", "player's inventory")));
+            var choice = Transfers.ResolveChoice(f.Get("item"),
+                ChoicesIn((useBag ? bag : new List<InvStack>()).Concat(useToolbar ? toolbar : new List<InvStack>())), out var itemError);
+            if (choice == null) return (200, Error(itemError.Replace("source container(s)", "player's inventory")));
+            var itemId = choice.Id;
             var name = ItemName(itemId);
-            var display = gameText?.DisplayName(name) ?? name;
+            var display = choice.Display ?? name;
 
             var amountText = f.Get("amount") ?? "1";
             int amount;
@@ -274,7 +274,7 @@ namespace VoxtaBridge
 
             // 3. Take the stacks (with their state) and write the inventory back (the risky step, see class comment).
             var countBefore = CountInInventory(inv, itemId);
-            var taken = Transfers.TakeFromInventory(bag, toolbar, itemId, amount, useBag, useToolbar);
+            var taken = Transfers.TakeFromInventory(bag, toolbar, itemId, amount, useBag, useToolbar, choice.Token);
             if (taken.Count == 0) return (200, Error($"No {display} in the player's {(useBag && useToolbar ? "inventory" : useBag ? "bag" : "toolbar")}."));
             var (setOk, _, setData) = Api1(CmdId.Request_Player_SetInventory, new Inventory(player.EntityId, FromStacks(toolbar), FromStacks(bag)), true);
             if (!setOk) return (200, Error($"The game refused to change the inventory ({Describe(setData)}); nothing was moved."));
@@ -394,11 +394,11 @@ namespace VoxtaBridge
             var sources = from == null ? all : Transfers.Match(all, from);
             if (sources.Count == 0) return Error($"No container '{from}'. Containers: {string.Join(", ", all.Select(c => c.Label))}.");
 
-            var itemId = Transfers.ResolveItem(req.Get("item"), sources.SelectMany(s => s.ItemIds()).Distinct(), ItemName,
-                id => gameText?.DisplayName(ItemName(id)), out var itemError);
-            if (itemId == 0) return Error(itemError);
-            var display = gameText?.DisplayName(ItemName(itemId)) ?? ItemName(itemId);
-            var stackMode = Transfers.NeedsStackMode(itemId, sources, gameText?.IsToken(ItemName(itemId)) ?? false);
+            var choice = Transfers.ResolveChoice(req.Get("item"), ChoicesIn(sources), out var itemError);
+            if (choice == null) return Error(itemError);
+            var itemId = choice.Id;
+            var display = choice.Display ?? ItemName(itemId);
+            var stackMode = choice.Token != null || Transfers.NeedsStackMode(itemId, sources, gameText?.IsToken(ItemName(itemId)) ?? false);
 
             var amountText = req.Get("amount") ?? "1";
             int amount;
@@ -407,7 +407,7 @@ namespace VoxtaBridge
             int.TryParse(req.Get("max"), out var max);
             if (max <= 0) max = 10000;
 
-            var r = Transfers.RemoveOnly(itemId, amount, sources, max, stackMode);
+            var r = Transfers.RemoveOnly(itemId, amount, sources, max, stackMode, choice.Token);
             Log($"remove for player: {display} x{amountText}: " + (r.Ok ? $"took {r.Moved}" : $"failed: {r.Error}"));
             var j = new Json().Obj().Prop("ok", r.Ok);
             if (!r.Ok) j.Prop("error", r.Error);

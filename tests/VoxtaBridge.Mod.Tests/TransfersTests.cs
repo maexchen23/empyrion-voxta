@@ -269,3 +269,94 @@ public class MatchItemsTests
         Assert.Equal(expected, Transfers.MatchItems(spec, [1, 2, 3, 4], Internal, Display));
     }
 }
+
+/// <summary>Tokens are all the item "Token"; their kind (e.g. a mining contract) is the stack's token id.</summary>
+public class TokenChoiceTests
+{
+    private const int Token = 900, Ore = 300, Bullet = 100;
+    private const int Cobalt = 6820, Iron = 6826, WorkOrder = 4057;
+    private static string Internal(int id) => id switch { Token => "Token", Ore => "CobaltOre", Bullet => "45mmBullet", _ => null };
+    private static string Display(int id) => id switch { Token => "Token", Ore => "Cobalt Ore", Bullet => "45mm Ammo", _ => null };
+    private static string TokenName(int t) => t switch { Cobalt => "Mining Contract: Cobalt", Iron => "Mining Contract: Iron", WorkOrder => "Work Order - Solaris-AMP", _ => null };
+
+    private static List<Transfers.ItemChoice> Choices(params InvStack[] stacks) =>
+        Transfers.Choices(stacks, Internal, Display, id => id == Token, TokenName);
+
+    private static readonly InvStack[] Mixed =
+    [
+        new(Token, 1, ammo: Cobalt), new(Token, 1, ammo: Iron), new(Token, 1, ammo: WorkOrder), new(Token, 1, ammo: 777),
+        new(Ore, 500), new(Bullet, 200),
+    ];
+
+    [Fact]
+    public void Each_token_kind_is_its_own_choice_named_from_the_token_list()
+    {
+        var c = Choices(Mixed);
+        Assert.Equal(6, c.Count);
+        Assert.Equal(["Mining Contract: Cobalt", "Mining Contract: Iron", "Work Order - Solaris-AMP", "Token #777"],
+            c.Where(x => x.Token != null).Select(x => x.Display));
+        Assert.Equal("Cobalt Ore", c.Single(x => x.Id == Ore).Display);
+    }
+
+    [Theory]
+    [InlineData("cobalt contract", Token, Cobalt)]
+    [InlineData("Mining Contract: Iron", Token, Iron)]
+    [InlineData("work order", Token, WorkOrder)]
+    [InlineData("cobalt ore", Ore, null)]
+    [InlineData("45mmBullet", Bullet, null)]
+    public void Resolve_by_token_name_or_item_name(string spec, int id, int? token)
+    {
+        var hit = Transfers.ResolveChoice(spec, Choices(Mixed), out var error);
+        Assert.Null(error);
+        Assert.Equal((id, token), (hit!.Id, hit.Token));
+    }
+
+    [Fact]
+    public void Ambiguous_names_list_the_token_kinds()
+    {
+        Assert.Null(Transfers.ResolveChoice("token", Choices(Mixed), out var error));
+        Assert.Contains("Mining Contract: Cobalt", error);
+        Assert.Contains("Work Order - Solaris-AMP", error);
+        Assert.Null(Transfers.ResolveChoice("mining contract", Choices(Mixed), out var error2));
+        Assert.Contains("Mining Contract: Iron", error2);
+    }
+
+    [Fact]
+    public void Find_matches_all_kinds_of_a_word()
+    {
+        Assert.Equal(2, Transfers.MatchChoices("contract", Choices(Mixed)).Count);
+        Assert.Equal(4, Transfers.MatchChoices("token", Choices(Mixed)).Count);
+        Assert.Equal(2, Transfers.MatchChoices("cobalt", Choices(Mixed)).Count); // the contract and the ore
+    }
+
+    [Fact]
+    public void Moving_a_token_moves_only_that_kind()
+    {
+        var src = new TransfersTests.Box("Contracts", "Contracts", "Container");
+        src.WithStack(new InvStack(Token, 1, ammo: Iron)).WithStack(new InvStack(Token, 1, ammo: Cobalt));
+        var dst = new TransfersTests.Box("Hold", "Hold", "Container");
+
+        var r = Transfers.MoveStacks(Token, 1, dst, [src], 10000, _ => 999, Cobalt);
+        Assert.True(r.Ok, r.Error);
+        Assert.Equal(Cobalt, Assert.Single(dst.Content).Ammo);
+        Assert.Equal(Iron, Assert.Single(src.Content).Ammo);
+
+        Assert.False(Transfers.MoveStacks(Token, 1, dst, [src], 10000, _ => 999, WorkOrder).Ok); // none of that kind
+    }
+
+    [Fact]
+    public void Taking_a_token_for_the_player_takes_only_that_kind()
+    {
+        var src = new TransfersTests.Box("Contracts", "Contracts", "Container");
+        src.WithStack(new InvStack(Token, 1, ammo: Iron)).WithStack(new InvStack(Token, 1, ammo: Cobalt));
+        var r = Transfers.RemoveOnly(Token, 1, [src], 10000, token: Cobalt);
+        Assert.True(r.Ok, r.Error);
+        Assert.Equal(Cobalt, Assert.Single(r.Stacks).Ammo);
+        Assert.Equal(Iron, Assert.Single(src.Content).Ammo);
+
+        var bag = new List<InvStack> { new(Token, 1, 0, Iron), new(Token, 1, 1, Cobalt) };
+        var taken = Transfers.TakeFromInventory(bag, [], Token, 1, true, false, Cobalt);
+        Assert.Equal(Cobalt, Assert.Single(taken).Ammo);
+        Assert.Equal(Iron, Assert.Single(bag).Ammo);
+    }
+}

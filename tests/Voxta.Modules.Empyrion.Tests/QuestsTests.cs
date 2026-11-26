@@ -56,12 +56,12 @@ public class NewMissionTests
         GameEventConfig.From(id => modes.Where(m => m.id == id).Select(m => m.mode).FirstOrDefault(), null);
 
     [Fact]
-    public void New_factory_mission_is_spoken_trader_mission_silent_by_default()
+    public void New_factory_mission_is_spoken_trader_mission_off_by_default()
     {
+        // other traders roll a mission on every talk: off by default, or a walk through a station spams the chat
         var events = GameEvents.Diff(S(), S(Factory, Shop));
-        Assert.Equal(2, events.Count);
-        Assert.True(events.Single(e => e.Name == "NewFactoryMission").Important);
-        Assert.False(events.Single(e => e.Name == "NewTraderMission").Important);
+        Assert.True(Assert.Single(events).Important);
+        Assert.Equal("NewFactoryMission", events[0].Name);
     }
 
     [Fact]
@@ -72,8 +72,9 @@ public class NewMissionTests
         Assert.All(none, e => Assert.False(e.Important));
         var all = GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "on"), ("new_trader_mission", "on")));
         Assert.All(all, e => Assert.True(e.Important));
-        var off = GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "off")));
+        var off = GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "off"), ("new_trader_mission", "silent")));
         Assert.Equal("NewTraderMission", Assert.Single(off).Name);
+        Assert.Empty(GameEvents.Diff(S(), S(Factory, Shop), config: Cfg(("new_factory_mission", "off"))));
     }
 
     [Fact]
@@ -95,7 +96,8 @@ public class NewMissionTests
         Assert.Contains("trades are unlocked now", done.Description);
         var follow = Assert.Single(GameEvents.Diff(S(f with { FollowUp = true }), S()));
         Assert.DoesNotContain("unlocked", follow.Description);
-        var shop = Assert.Single(GameEvents.Diff(S(Shop), S()));
+        Assert.Empty(GameEvents.Diff(S(Shop), S())); // trader missions: off by default
+        var shop = Assert.Single(GameEvents.Diff(S(Shop), S(), config: Cfg(("trader_mission_done", "silent"))));
         Assert.Equal("TraderMissionDone", shop.Name);
         Assert.False(shop.Important);
         Assert.True(Assert.Single(GameEvents.Diff(S(Shop), S(), config: Cfg(("trader_mission_done", "on")))).Important);
@@ -185,5 +187,51 @@ public class SettingsDependencyTests
                 Assert.Contains(target, names);
         Assert.Contains("GameChatMirror", names);
         Assert.DoesNotContain("GameChatPrefix", names);
+    }
+}
+
+public class MiningContractEventTests
+{
+    static readonly HeldContract Cobalt = new(6820, "Mining Contract: Cobalt", "Polaris Megacorp", "12,000 Cobalt Ore", 960000, 500, 1);
+    static readonly ContractOffer Refinery = new("173015--8/168/-3-OUZL V", 716703, "Orbital Refinery (OUZL V)");
+
+    static GameState S(IReadOnlyList<HeldContract>? held, IReadOnlyList<ContractOffer>? offers, long credits) =>
+        new() { Player = "Player1", Playfield = "OUZL V", HeldContracts = held, ContractOffers = offers, Credits = credits };
+
+    static GameEventConfig Cfg(params (string id, string mode)[] modes) => NewMissionTests.Cfg(modes);
+
+    [Fact]
+    public void New_contract_when_the_refinery_offer_changes_silent_by_default()
+    {
+        var e = Assert.Single(GameEvents.Diff(S([], [Refinery with { Value = 700000 }], 0), S([Cobalt], [Refinery], 0)));
+        Assert.Equal("NewMiningContract", e.Name);
+        Assert.False(e.Important);
+        Assert.Contains("Mining Contract: Cobalt for Polaris Megacorp: 12,000 Cobalt Ore for 960,000 credits at Orbital Refinery (OUZL V)", e.Description);
+        // the first contract from a refinery: a new row
+        Assert.Single(GameEvents.Diff(S([], [], 0), S([Cobalt], [Refinery], 0)));
+        Assert.True(Assert.Single(GameEvents.Diff(S([], [], 0), S([Cobalt], [Refinery], 0), config: Cfg(("new_mining_contract", "on")))).Important);
+        Assert.Empty(GameEvents.Diff(S([], [], 0), S([Cobalt], [Refinery], 0), config: Cfg(("new_mining_contract", "off"))));
+    }
+
+    [Fact]
+    public void Moving_the_token_around_is_no_event()
+    {
+        // token into a container: gone from the inventory, no pay, offer unchanged
+        Assert.Empty(GameEvents.Diff(S([Cobalt], [Refinery], 1000), S([], [Refinery], 1000)));
+        // and back
+        Assert.Empty(GameEvents.Diff(S([], [Refinery], 1000), S([Cobalt], [Refinery], 1000)));
+        // unknown offers (no data this poll) never read as new
+        Assert.Empty(GameEvents.Diff(S([], null, 0), S([Cobalt], [Refinery], 0)));
+    }
+
+    [Fact]
+    public void Hand_in_when_the_token_leaves_and_the_pay_arrives()
+    {
+        var e = Assert.Single(GameEvents.Diff(S([Cobalt], [Refinery], 50000), S([], [Refinery], 1010000)));
+        Assert.Equal("MiningContractDone", e.Name);
+        Assert.False(e.Important);
+        Assert.Contains("handed in Mining Contract: Cobalt for Polaris Megacorp: 960,000 credits and 500 Polaris Megacorp reputation", e.Description);
+        Assert.Empty(GameEvents.Diff(S([Cobalt], [Refinery], 50000), S([], [Refinery], 60000))); // too little: sold something else
+        Assert.True(Assert.Single(GameEvents.Diff(S([Cobalt], [Refinery], 0), S([], [Refinery], 960000), config: Cfg(("mining_contract_done", "on")))).Important);
     }
 }

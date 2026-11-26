@@ -136,6 +136,17 @@ public sealed class BridgeClient
         return PostFormAsync("/quests", form, cancellationToken);
     }
 
+    /// <summary>POST /mining-contracts: the contract table filtered by ore/faction, or (mine) the player's contracts and ore in reach.</summary>
+    public Task<JsonDocument> MiningContractsAsync(string? ore, string? faction, bool mine, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrWhiteSpace(ore)) form.Add(new("ore", ore.Trim()));
+        if (!string.IsNullOrWhiteSpace(faction)) form.Add(new("faction", faction.Trim()));
+        if (mine) form.Add(new("mine", "1"));
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/mining-contracts", form, cancellationToken);
+    }
+
     /// <summary>POST /quest-pursue: pursue one trader mission (its line goes into the live context), or "none".</summary>
     public Task<JsonDocument> PursueQuestAsync(string name, string? steamId, CancellationToken cancellationToken)
     {

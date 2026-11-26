@@ -35,10 +35,12 @@ public static class GameEventSettings
         new("new_structure", "New ship or base spawned from a blueprint", On),
         new("starter_placed", "Starter block placed (new base or vessel)", On),
         new("new_factory_mission", "New factory mission", On),
-        new("new_trader_mission", "New trader mission", Silent),
+        new("new_trader_mission", "New trader mission", Off),
         new("factory_mission_done", "Factory mission handed in", On),
-        new("trader_mission_done", "Trader mission handed in", Silent),
+        new("trader_mission_done", "Trader mission handed in", Off),
         new("pursued_mission_done", "Pursued mission done", On),
+        new("new_mining_contract", "New mining contract", Silent),
+        new("mining_contract_done", "Mining contract handed in", Silent),
         new("blueprint_ready", "Factory blueprint ready", On),
     ];
 

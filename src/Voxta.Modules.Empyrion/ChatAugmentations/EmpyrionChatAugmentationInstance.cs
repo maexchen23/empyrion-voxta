@@ -50,6 +50,9 @@ public sealed class EmpyrionChatAugmentationInstance(
     private const string StatusArg = "status";
     private const string TextArg = "text";
     private const string NearArg = "near";
+    private const string OreArg = "ore";
+    private const string FactionArg = "faction";
+    private const string MineArg = "mine";
     private const string ChangesArg = "changes";
     private const string ActionArg = "action";
     private const string ConditionsArg = "conditions";
@@ -97,7 +100,8 @@ public sealed class EmpyrionChatAugmentationInstance(
                 ]),
             ReadTool(EmpyrionConstants.FindItemTool,
                 "Where is an item and how much of it: searches the player's bag and toolbar and every container in reach " +
-                "(the ship, its carrier and docked ships, own structures in range). Part of a name finds several items.",
+                "(the ship, its carrier and docked ships, own structures in range). Part of a name finds several items. Tokens " +
+                "(mining contracts, work orders, reward tokens) are found by their own name, e.g. 'cobalt contract'.",
                 [
                     new FunctionArgumentDefinition
                     {
@@ -214,6 +218,31 @@ public sealed class EmpyrionChatAugmentationInstance(
                     {
                         Name = ItemArg, Type = FunctionArgumentType.String, Required = false,
                         Description = "Only missions that want this item (name or part of it), e.g. 'Graphite'.",
+                    },
+                ]),
+            ReadTool(EmpyrionConstants.MiningContractsTool,
+                "Mining contracts from Polaris Orbital Refineries (the game's own contract list): which faction wants how much of " +
+                "which ore and what it pays, e.g. 'does anyone offer magnesium contracts?', 'who wants titanium?'. With mine='yes' " +
+                "it checks the player's own contracts instead: which contract tokens they have (inventory or containers in reach) " +
+                "and how much of the wanted ore is on board, for 'can I turn in a contract?'. Rules: the contract token must be in " +
+                "the player's inventory to hand it in, the ore goes into the refinery's quest container; every contract gives " +
+                "reputation with its faction, also with enemies; a refinery gives one contract per player every 2 hours of game " +
+                "time; the faction can be chosen once the player is Honored with Polaris.",
+                [
+                    new FunctionArgumentDefinition
+                    {
+                        Name = OreArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "Only contracts for this ore (name or part of it), e.g. 'magnesium'.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = FactionArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "Only contracts of this faction, e.g. 'Zirax', 'Polaris', 'Colonists', 'Trade'.",
+                    },
+                    new FunctionArgumentDefinition
+                    {
+                        Name = MineArg, Type = FunctionArgumentType.String, Required = false,
+                        Description = "'yes' = the player's own contracts and the ore on board (ignores ore and faction).",
                     },
                 ]),
             MarkTool(EmpyrionConstants.PursueQuestTool,
@@ -443,7 +472,8 @@ public sealed class EmpyrionChatAugmentationInstance(
                 "Move items between containers in reach (ship, carrier, docked ships, own structures in range) and the player's " +
                 "own inventory. Use the container labels from empyrion_get_current_ship; use 'player' (or 'bag' / 'toolbar') for " +
                 "the player's inventory. A ship's 'Fuel Tank', 'Oxygen Tank' or 'Pentaxid Tank' can be the target (fill it from containers) or " +
-                "the source (take fuel cells, oxygen bottles or Refined Pentaxid out). Changes the game, so only do it when the player asks.",
+                "the source (take fuel cells, oxygen bottles or Refined Pentaxid out). Tokens go by their own name, e.g. " +
+                "'Mining Contract: Cobalt'. Changes the game, so only do it when the player asks.",
                 ChatToolSchema.FromArguments([
                     new FunctionArgumentDefinition
                     {
@@ -654,6 +684,10 @@ public sealed class EmpyrionChatAugmentationInstance(
                 return new ChatToolCallResult($"'{PoiArg}' is required.", IsError: true);
             return await BridgeCallAsync(() => client.PoiTerminalAsync(terminalPoi.Trim(), steamId, cancellationToken), GameView.PoiTerminalResult);
         }
+        if (name == EmpyrionConstants.MiningContractsTool)
+            return await BridgeCallAsync(() => client.MiningContractsAsync(GetString(arguments, OreArg), GetString(arguments, FactionArg),
+                GetString(arguments, MineArg) is { } mine && (mine.Equals("yes", StringComparison.OrdinalIgnoreCase) || mine == "1" || mine.Equals("true", StringComparison.OrdinalIgnoreCase)),
+                steamId, cancellationToken), GameView.MiningContractsResult);
         if (name == EmpyrionConstants.ListQuestsTool)
             return await BridgeCallAsync(() => client.QuestsAsync(GetString(arguments, StatusArg), GetString(arguments, NearArg), GetString(arguments, ItemArg), steamId, cancellationToken), GameView.QuestsResult);
         if (name == EmpyrionConstants.PursueQuestTool)

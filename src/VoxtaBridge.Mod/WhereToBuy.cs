@@ -68,6 +68,12 @@ namespace VoxtaBridge
                         using (var r = new StreamReader(dlgText)) missions.LoadTexts(r);
                         tradeMissions = missions;
                         Log($"trade missions: {missions.Count} trader mission dialogues");
+                        var contracts = new MiningContracts();
+                        using (var r = new StreamReader(dlg)) contracts.LoadDialogues(r);
+                        miningContracts = contracts;
+                        using (var r = new StreamReader(dlg)) questDropNames = MiningContracts.DropContainerNames(r).ToArray();
+                        Log($"quest hand-in containers: {string.Join(", ", questDropNames)}");
+                        Log($"mining contracts: {contracts.Count} contracts, cooldown {contracts.CooldownSeconds} s");
                     }
                 }
                 catch (Exception e) { Log($"poi terminals: {e.Message}"); }
