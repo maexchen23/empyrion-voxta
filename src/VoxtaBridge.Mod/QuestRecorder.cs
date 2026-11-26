@@ -138,6 +138,7 @@ namespace VoxtaBridge
         /// <summary>Dedi: API1 Event_PdaStateChange (chapter activated / deactivated / completed). Always kept, logged when QuestLog is on.</summary>
         static void RecordPda(PdaStateInfo psi)
         {
+            try { RecordFight(psi); } catch (Exception e) { Log($"fights: {e.Message}"); }
             lock (pdaActive)
             {
                 if (psi.StateChange == PdaStateChange.ChapterActivated) pdaActive[psi.PlayerId] = psi.Name;

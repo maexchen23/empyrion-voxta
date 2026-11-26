@@ -150,6 +150,16 @@ public class TradeMissionsTests(ITestOutputHelper output)
         Assert.Equal("EnergyCellLarge", foreman.Missions[1].Needs[0].Item);
         Assert.Equal(4, foreman.Missions.Count);
         output.WriteLine("quantity families: " + string.Join(", ", t.Families.Where(f => f.QuantityVar != null).Select(f => f.Name)));
+        Assert.Equal([0, 2], foreman.OpenValues.OrderBy(v => v));
+        var beacon = t.ByName("Eden_WreckBeacon")!;
+        Assert.True(beacon.Job);
+        Assert.Equal([0], beacon.OpenValues);
+        Assert.Equal(8, beacon.Missions.Count);
+        var distress = t.ByName("Eden_DistressCol")!;
+        Assert.Equal(("Eden_Randomize", "Eden_Completed", 1, true), (distress.MissionVar, distress.DoneVar, distress.DoneFrom, distress.Job));
+        Assert.Equal("Eden_RepairKitWarp", distress.Missions[3].Needs[0].Item);
+        Assert.Equal(["Eden_DistressCol", "Eden_DistressPol", "Eden_PolarisForeman", "Eden_WreckBeacon"],
+            t.Families.Where(f => !f.Name.StartsWith("TD_")).Select(f => f.Name).OrderBy(n => n));
     }
 
     // shaped like RE2's Mining Foreman (cut down)
@@ -197,6 +207,118 @@ public class TradeMissionsTests(ITestOutputHelper output)
         Assert.True(done.CanTrade > 0);
         // a TD family with the same mission variable name doesn't get in the way: the prefab decides
         Assert.Same(f, t.Resolve(["Eden_PolarisForeman_Init"], new Dictionary<string, int> { ["Eden_Mission"] = 1 }));
+    }
+
+    // shaped like RE2's emergency beacon (cut down): the first access rolls item, count and owner; 0 = still to repair
+    const string Beacon = """
+        { +Dialogue Name: Eden_WreckBeacon_Init
+          Next_1: Eden_WreckBeacon_Deny2
+          NextIf_1: "Eden_Complete == 2"
+          Next_2: Eden_WreckBeacon_Flee
+          NextIf_2: "Eden_Complete == 3"
+          Next_3: Eden_WreckBeacon_Setup
+          NextIf_3: "Eden_Faction == 0"
+          Next_4: Eden_WreckBeacon_Repair
+          NextIf_4: "Eden_Complete == 0"
+          Next_5: Eden_WreckBeacon_Select
+          NextIf_5: "Eden_Complete == 1"
+          Variable_1: "Eden_Faction", param1: dbplayerpoi_int
+          Variable_2: "Eden_RepairItem", param1: dbplayerpoi_int
+          Variable_3: "Eden_RepairItemType", param1: string
+          Variable_4: "Eden_RepairItemCount", param1: dbplayerpoi_int
+          Variable_5: "Eden_Complete", param1: dbplayerpoi_int
+          Execute: "if (Eden_RepairItem == 1) Eden_RepairItemType = 'Electronics'; if (Eden_RepairItem == 3) Eden_RepairItemType = 'OpticalFiber'"
+        }
+        { +Dialogue Name: Eden_WreckBeacon_Setup
+          Execute: "Eden_Faction = Random(1,3); Eden_RepairItem = Random(1,8); Eden_RepairItemCount = Random(1,4)"
+          Next_1: Eden_WreckBeacon_Init
+        }
+        { +Dialogue Name: Eden_WreckBeacon_Repair
+          OptionIf_1: "HasItem(Eden_RepairItemType, Eden_RepairItemCount)"
+          OptionNext_1: Eden_WreckBeacon_Repair2
+        }
+        { +Dialogue Name: Eden_WreckBeacon_Repair2
+          Execute: "RemoveItem(Eden_RepairItemType, Eden_RepairItemCount); Eden_Complete = 1"
+          Option_1: x
+          OptionNext_1: Eden_WreckBeacon_Init
+        }
+        { +Dialogue Name: Eden_WreckBeacon_Select
+          Next_1: Eden_WreckBeacon_Polaris
+        }
+        { +Dialogue Name: Eden_WreckBeacon_Polaris
+          Execute: "Eden_Complete = 2; Player.Credit += 10000"
+          Next_1: Eden_WreckBeacon_Init
+        }
+        """;
+
+    [Fact]
+    public void Beacon_is_a_job_open_only_until_repaired()
+    {
+        var t = new TradeMissions();
+        t.LoadDialogues(new StringReader(Beacon));
+        var f = t.ByStart("Eden_WreckBeacon_Init")!;
+        Assert.True(f.Job);
+        Assert.False(f.TradeGated);
+        Assert.Equal([0], f.OpenValues);
+        var vars = new Dictionary<string, int> { ["Eden_Faction"] = 2, ["Eden_RepairItem"] = 3, ["Eden_RepairItemCount"] = 3, ["Eden_Complete"] = 0 };
+        var open = TradeMissions.State(f, vars);
+        Assert.Equal("open", open.Status);
+        Assert.Equal(("OpticalFiber", 3), (open.Mission.Needs[0].Item, open.Mission.Needs[0].Count));
+        foreach (var done in new[] { 1, 2, 3 }) // repaired, owner contacted, bandit ambush
+            Assert.Equal("none", TradeMissions.State(f, new Dictionary<string, int>(vars) { ["Eden_Complete"] = done }).Status);
+    }
+
+    // shaped like RE2's ships in distress (cut down): the first talk rolls which repair kit they need
+    const string Distress = """
+        { +Dialogue Name: Eden_DistressCol_Start
+          Variable_1: "Eden_Completed", param1: dbplayerpoi_int
+          Variable_2: "Eden_Randomize", param1: dbplayerpoi_int
+          Next_1: Eden_Distress_Completed
+          NextIf_1: "Eden_Completed >= 1"
+          Next_2: Eden_DistressCol_Randomize
+          NextIf_2: "Eden_Randomize == 0"
+          Next_3: Eden_DistressCol_Select
+          NextIf_3: "Eden_Randomize >= 1"
+        }
+        { +Dialogue Name: Eden_DistressCol_Randomize
+          Execute: "Eden_Randomize = Random(1,2)"
+          Next_1: Eden_DistressCol_Select
+        }
+        { +Dialogue Name: Eden_DistressCol_Select
+          Next_1: Eden_DistressCol_Greet1
+          NextIf_1: "Eden_Randomize >= 2"
+          Next_2: Eden_DistressCol_Greet2
+          NextIf_2: "Eden_Randomize >= 1"
+        }
+        { +Dialogue Name: Eden_DistressCol_Greet1
+          OptionIf_1: "HasItem('Eden_RepairKitLifeSupport', 1)"
+          OptionNext_1: Eden_DistressCol_Reward1
+        }
+        { +Dialogue Name: Eden_DistressCol_Reward1
+          Execute: "RemoveItem('Eden_RepairKitLifeSupport', 1); Player.Credit += Random(25000,35000); Eden_Completed = 1"
+        }
+        { +Dialogue Name: Eden_DistressCol_Greet2
+          OptionIf_1: "HasItem('Eden_RepairKitWeapons', 1)"
+          OptionNext_1: Eden_DistressCol_Reward2
+        }
+        { +Dialogue Name: Eden_DistressCol_Reward2
+          Execute: "RemoveItem('Eden_RepairKitWeapons', 1); Player.Credit += Random(25000,35000); Eden_Completed = 1"
+        }
+        """;
+
+    [Fact]
+    public void Ship_in_distress_is_a_job_with_the_rolled_kit()
+    {
+        var t = new TradeMissions();
+        t.LoadDialogues(new StringReader(Distress));
+        var f = t.ByStart("Eden_DistressCol_Start")!;
+        Assert.Equal(("Eden_Randomize", "Eden_Completed", 1, true), (f.MissionVar, f.DoneVar, f.DoneFrom, f.Job));
+        var open = TradeMissions.State(f, new Dictionary<string, int> { ["Eden_Randomize"] = 2 });
+        Assert.Equal("open", open.Status);
+        Assert.Equal(("Eden_RepairKitLifeSupport", 1), (open.Mission.Needs[0].Item, open.Mission.Needs[0].Count));
+        Assert.Equal("Eden_RepairKitWeapons", TradeMissions.State(f, new Dictionary<string, int> { ["Eden_Randomize"] = 1 }).Mission.Needs[0].Item);
+        Assert.Equal("none", TradeMissions.State(f, new Dictionary<string, int> { ["Eden_Randomize"] = 1, ["Eden_Completed"] = 1 }).Status);
+        Assert.Equal("none", TradeMissions.State(f, new Dictionary<string, int>()).Status); // not talked to yet: nothing rolled
     }
 
     [Fact]

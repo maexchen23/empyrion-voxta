@@ -148,7 +148,7 @@ public static class GameEvents
         }
 
         if (prev.PursuingLine != null && prev.PursuingStatus is "open" or "locked" && next.PursuingStatus == "done")
-            events.Add(new("PursuedMissionDone", $"The pursued trader mission is done: {next.PursuingLine}.", true, Id: "pursued_mission_done"));
+            events.Add(new("PursuedMissionDone", $"The pursued mission is done: {next.PursuingLine}.", true, Id: "pursued_mission_done"));
 
         // new trader missions: only against a known earlier list (the first list of a chat is the baseline)
         if (prev.OpenMissions is { } before && next.OpenMissions is { } now)
@@ -156,6 +156,18 @@ public static class GameEvents
             var known = before.Select(m => m.Key).ToHashSet();
             foreach (var m in now.Where(m => !known.Contains(m.Key)))
             {
+                if (m.Kind is "job" or "scan")
+                {
+                    // a job (beacon, ship in distress) after the first talk, or a probe scan here: the items go into the
+                    // player's inventory for the hand-in / the scanning table, so the character offers to get them there
+                    var speakJob = config.ModeOf("new_job") == GameEventSettings.On;
+                    var what = m.Kind == "scan" ? $"The ship's sensors register unresolved anomalies: {m.Line}." : $"The player just took on a job: {m.Line}.";
+                    events.Add(new("NewJob", what + (speakJob
+                        ? " Tell the player briefly. The items have to be in the player's inventory, so offer to move them there " +
+                          "(empyrion_transfer_items), or to craft them (empyrion_craft) if none are in reach."
+                        : ""), speakJob, m.Key, "new_job"));
+                    continue;
+                }
                 var factory = m.Kind == "factory";
                 var id = factory ? "new_factory_mission" : "new_trader_mission";
                 var speak = config.ModeOf(id) == GameEventSettings.On;
@@ -167,6 +179,16 @@ public static class GameEvents
             var open = now.Select(m => m.Key).ToHashSet();
             foreach (var m in before.Where(m => !open.Contains(m.Key) && !m.Pursued))
             {
+                if (m.Kind is "job" or "scan")
+                {
+                    // a scan row also goes away when the player leaves the sector: done only if the sector says so
+                    if (m.Kind == "scan" && !(next.Sector is { Scan.Done: true } here && m.Key == $"scan-{here.Playfield}#1")) continue;
+                    var speakDone = config.ModeOf("job_done") == GameEventSettings.On;
+                    events.Add(new("JobDone", m.Kind == "scan"
+                        ? $"The player finished the probe scan at {m.Where ?? m.Line}."
+                        : $"The player finished the job for {m.Where ?? m.Line}.", speakDone, Id: "job_done"));
+                    continue;
+                }
                 var factory = m.Kind == "factory";
                 var where = m.Where ?? m.Line;
                 var desc = factory
@@ -189,6 +211,41 @@ public static class GameEvents
                     (speak ? " Tell the player about it like a broadcast you just picked up." : ""),
                     speak, "site:" + job.Key, "mining_site_job"));
             }
+
+        // Arrival in a sector: what the ship picks up there, not what the game knows. The sector's own report (the PDA shows
+        // it to the player on the first visit) and NPCs on the local channel calling for help. Both read as transmissions
+        // the character just picked up. (Probe scans come as jobs, see NewJob.)
+        if (next.Sector is { } sector && sector.Playfield == next.Playfield && prev.Sector?.Playfield != sector.Playfield && prev.Sector != null)
+        {
+            var briefingOn = config.ModeOf("sector_briefing");
+            if (briefingOn != GameEventSettings.Off)
+            {
+                var parts = new List<string>();
+                if (sector.FirstVisit && sector.Briefing != null)
+                    parts.Add($"Arriving in {sector.Playfield}, the ship picked up the sector's {(sector.BriefingKind is "science" or "security" ? sector.BriefingKind + " " : "")}" +
+                              $"report: \"{sector.Briefing}\"");
+                if (parts.Count > 0)
+                {
+                    var speak = briefingOn == GameEventSettings.On;
+                    events.Add(new("SectorBriefing", string.Join(" ", parts) + (speak ? " Pass it on to the player in your own words, briefly." : ""),
+                        speak, Id: "sector_briefing"));
+                }
+            }
+        }
+        if (prev.Sector is { } sectorBefore && next.Sector is { } sectorNow && sectorNow.Playfield == next.Playfield)
+            foreach (var call in sectorNow.Calls.Where(c => !c.Done && (sectorBefore.Playfield != sectorNow.Playfield || sectorBefore.Calls.All(b => b.Key != c.Key))))
+            {
+                var mode = config.ModeOf("help_call");
+                if (mode == GameEventSettings.Off) break;
+                var speak = mode == GameEventSettings.On;
+                events.Add(new("HelpCall",
+                    $"On the local channel, the {call.Where} is calling for help: \"{call.Plea}\"" +
+                    (speak ? " Tell the player about the call like a transmission you just picked up; they'd have to go and talk to them." : ""),
+                    speak, "help:" + call.Key, "help_call"));
+            }
+
+        FightEvents(prev, next, config, events);
+        TimedEvents(prev, next, config, events);
 
         // Mining contracts. New: a refinery's offer row for the player changed (it changes with every contract given; moving
         // the token between the inventory and containers doesn't touch it). Handed in: a contract token left the inventory
@@ -270,6 +327,128 @@ public static class GameEvents
             };
             events.Add(new(id, text, true, Id: id));
             return;
+        }
+    }
+
+    // ----- scripted fights ------------------------------------------------------------------------------------------
+
+    private static int CountOf(IReadOnlyDictionary<string, int>? blocks, FightInfo f)
+    {
+        if (blocks == null) return 0;
+        var types = f.Waves.SelectMany(w => w.Types).Distinct();
+        return types.Sum(t => blocks.TryGetValue(t, out var n) ? n : 0);
+    }
+
+    /// <summary>
+    /// Fills in <see cref="FightInfo.Destroyed"/>: the targets (cores) the player destroyed since the fight started, from
+    /// the playfield server's cumulative block counts. <paramref name="baselines"/> keeps the count at the start per fight.
+    /// </summary>
+    public static GameState WithFightProgress(GameState? prev, GameState next, Dictionary<string, int> baselines)
+    {
+        if (next.Fights is not { Count: > 0 } fights)
+        {
+            if (next.Fights != null) baselines.Clear();
+            return next;
+        }
+        var list = new List<FightInfo>();
+        foreach (var f in fights)
+        {
+            var now = CountOf(next.DestroyedBlocks, f);
+            var before = prev?.Fights?.FirstOrDefault(p => p.Id == f.Id);
+            if (!baselines.TryGetValue(f.Id, out var baseline))
+                baselines[f.Id] = baseline = before == null && prev != null ? CountOf(prev.DestroyedBlocks, f) : now;
+            // a new playfield process starts counting at 0: carry over what was counted so far
+            if (now < baseline) baselines[f.Id] = baseline = -(before?.Destroyed ?? 0);
+            list.Add(f with { Destroyed = Math.Max(0, now - baseline) });
+        }
+        foreach (var gone in baselines.Keys.Where(k => fights.All(f => f.Id != k)).ToList()) baselines.Remove(gone);
+        return next with { Fights = list };
+    }
+
+    private static string Ships(FightWave w) =>
+        w.Ships > 0 ? $"{w.Ships} {(w.What.Length > 0 ? w.What : "enemy")} ship{(w.Ships == 1 ? "" : "s")}" : $"{w.Targets} target{(w.Targets == 1 ? "" : "s")}";
+
+    private static string Waves(FightInfo f) => f.Waves.Count == 1
+        ? Ships(f.Waves[0])
+        : $"{f.Waves.Count} waves: " + string.Join(", then ", f.Waves.Select(Ships));
+
+    /// <summary>Scripted fights: started, a wave down (with what comes next), all down (with the next step).</summary>
+    private static void FightEvents(GameState prev, GameState next, GameEventConfig config, List<GameEvent> events)
+    {
+        if (prev.Fights is not { } before || next.Fights is not { } now) return;
+        var mode = config.ModeOf("space_fight");
+        if (mode == GameEventSettings.Off) return;
+        var speak = mode == GameEventSettings.On;
+        foreach (var f in now)
+        {
+            var was = before.FirstOrDefault(b => b.Id == f.Id);
+            if (f.State == "active" && was?.State != "active")
+            {
+                var first = f.Waves[0];
+                events.Add(new("FightStarted",
+                    $"A fight is starting: {Waves(f)}" +
+                    (first.DelayS > 0 && first.Ships > 0 ? $"; the first wave arrives in about {first.DelayS} seconds" : "") + "." +
+                    (f.StartMessage != null ? $" (The PDA says: \"{f.StartMessage}\")" : "") +
+                    (speak ? " Warn the player briefly, like a tactical officer." : ""), speak, Id: "space_fight"));
+                continue;
+            }
+            if (was == null) continue;
+            int d0 = was.Destroyed ?? 0, d1 = f.Destroyed ?? 0;
+            int c0 = f.Cleared(d0), c1 = f.Cleared(d1);
+            if (c1 > c0 && c1 < f.Waves.Count)
+            {
+                var nextWave = f.Waves[c1];
+                events.Add(new("FightWaveDown",
+                    $"Wave {c1} of {f.Waves.Count} is down ({d1} of {f.Total} enemy cores destroyed). Next: {Ships(nextWave)}" +
+                    (nextWave.DelayS > 0 ? $" in about {nextWave.DelayS} seconds" : "") +
+                    (nextWave.Allies != null ? $"; {nextWave.Allies} ships will come to help" : "") + "." +
+                    (speak ? " Say it in a sentence." : ""), speak, Id: "space_fight"));
+            }
+            else if (c1 > c0 && c1 >= f.Waves.Count || was.State == "active" && f.State == "completed" && c1 < f.Waves.Count)
+                // all cores counted, or the game says the fight is done although we counted fewer (e.g. allies got some)
+                events.Add(new("FightAllDown",
+                    $"All enemy ships are down{(c1 >= f.Waves.Count ? $" ({f.Total} cores destroyed)" : "")}{(f.After != null && f.State == "active" ? $". Next: {f.After}" : "")}." +
+                    (speak ? " Tell the player, briefly." : ""), speak, Id: "space_fight"));
+        }
+    }
+
+    // ----- missions against the clock ---------------------------------------------------------------------------------
+
+    private static readonly int[] TimeWarnings = [300, 120, 60];
+
+    private static string Clock(long s) => s >= 60 ? $"{s / 60} min{(s % 60 >= 30 ? " 30 s" : "")}" : $"{s} s";
+
+    /// <summary>Timed missions (the nebula's escape pods): started (with the probes it takes), warnings, progress, all done, time up.</summary>
+    private static void TimedEvents(GameState prev, GameState next, GameEventConfig config, List<GameEvent> events)
+    {
+        if (next.Sector is not { Timed: { } now } sector || prev.Sector is not { } prevSector || prevSector.Playfield != sector.Playfield) return;
+        var mode = config.ModeOf("timed_mission");
+        if (mode == GameEventSettings.Off) return;
+        var speak = mode == GameEventSettings.On;
+        foreach (var t in now)
+        {
+            var was = prevSector.Timed?.FirstOrDefault(x => x.Key == t.Key);
+            if (t.State == "active" && was?.State != "active" && t.LeftS is > 0 and var left)
+            {
+                var probes = sector.Scan is { Gated: not null } scan
+                    ? $" Each one is found with a narrow-band scan on the ship's scanning table: {scan.Probes ?? 1} {scan.ProbeName} per scan, " +
+                      $"{(scan.Probes ?? 1) * t.Total} in all. The probes have to be in the player's inventory: offer to move them there " +
+                      "(empyrion_transfer_items), or to craft them (empyrion_craft) if there aren't enough."
+                    : "";
+                events.Add(new("TimedMissionStarted",
+                    $"The clock is running on the {t.Npc}'s mission: {t.Total} to save, {Clock(left)} left.{probes}" +
+                    (speak ? " Tell the player, briefly." : ""), speak, Id: "timed_mission"));
+                continue;
+            }
+            if (was is not { State: "active" } || t.State != "active") continue;
+            if (t.Count > was.Count && t.Count >= t.Total)
+                events.Add(new("TimedMissionAllDone", $"All {t.Total} saved, with {Clock(t.LeftS ?? 0)} to spare. Next: return to the {t.Npc}.", speak, Id: "timed_mission"));
+            else if (t.Count > was.Count)
+                events.Add(new("TimedMissionProgress", $"{t.Count} of {t.Total} saved, {Clock(t.LeftS ?? 0)} left. Next: scan for the next one.", speak, Id: "timed_mission"));
+            else if (was.LeftS is > 0 && t.LeftS == 0 && t.Count < t.Total)
+                events.Add(new("TimedMissionTimeUp", $"Time is up on the {t.Npc}'s mission: {t.Count} of {t.Total} saved. Next: return to the {t.Npc}.", speak, Id: "timed_mission"));
+            else if (t.Count < t.Total && was.LeftS is { } l0 && t.LeftS is { } l1 && TimeWarnings.FirstOrDefault(w => l0 > w && l1 <= w) is > 0 and var mark)
+                events.Add(new("TimedMissionWarning", $"{Clock(mark)} left on the {t.Npc}'s mission, {t.Count} of {t.Total} saved.", speak, Id: "timed_mission"));
         }
     }
 }

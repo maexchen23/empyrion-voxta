@@ -1093,6 +1093,16 @@ public sealed class EmpyrionChatAugmentationInstance(
                 {
                     var view = GameView.Create(doc.RootElement, steamId, out var error);
                     state = warpSmoother.Apply(view?.State(), DateTimeOffset.UtcNow);
+                    if (state != null)
+                    {
+                        state = GameEvents.WithFightProgress(previous, state, _fightBaselines);
+                        // fight progress for testing: every change of the counted cores
+                        foreach (var f in state.Fights ?? [])
+                            if (previous?.Fights?.FirstOrDefault(p => p.Id == f.Id) is not { } was || was.Destroyed != f.Destroyed || was.State != f.State)
+                                logger.LogInformation("Empyrion fight {Fight} ({Title}): {State}, {Destroyed} of {Total} cores, wave {Wave} of {Waves} (blocks: {Blocks})",
+                                    f.Id, f.Title, f.State, f.Destroyed, f.Total, Math.Min(f.Cleared(f.Destroyed ?? 0) + 1, f.Waves.Count), f.Waves.Count,
+                                    state.DestroyedBlocks is { } db ? string.Join(", ", db.Select(kv => $"{kv.Key} {kv.Value}")) : "none");
+                    }
                     context = state?.ToContext() ?? $"[ EMPYRION ] {error}";
                     if (live.GameChat && view?.SteamId is { } chatPlayer)
                     {
@@ -1267,18 +1277,21 @@ public sealed class EmpyrionChatAugmentationInstance(
 
         foreach (var e in events.Where(e => !speak || !e.Important))
         {
-            logger.LogInformation("Empyrion event (silent): {Event}", e.Name);
+            logger.LogInformation("Empyrion event (silent): {Event}: {Text}", e.Name, e.Description);
             await session.SendNoteAsync($"[Empyrion: {e.Name}] {e.Description}", cancellationToken: ct);
         }
 
         if (!speak) return lastSpoken;
 
         var text = string.Join(" ", important.Select(e => e.Description));
-        logger.LogInformation("Empyrion event (spoken): {Events}", string.Join(", ", important.Select(e => e.Name)));
+        logger.LogInformation("Empyrion event (spoken): {Events}: {Text}", string.Join(", ", important.Select(e => e.Name)), text);
         await session.SendSecretAsync($"[GAME EVENT in Empyrion] {text} React to this briefly, in character.", cancellationToken: ct);
         await session.TriggerReplyAsync(ct);
         return now;
     }
+
+    /// <summary>Fight chapter id → the player's destroyed-core count when it started (to count this fight's kills).</summary>
+    private readonly Dictionary<string, int> _fightBaselines = new();
 
     private static readonly TimeSpan ReachCheckEvery = TimeSpan.FromSeconds(30);
     private DateTime _reachCheckedAt = DateTime.MinValue;

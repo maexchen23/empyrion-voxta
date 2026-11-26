@@ -81,6 +81,30 @@ namespace VoxtaBridge
                         using (var r = new StreamReader(dlg)) sites.LoadDialogues(r);
                         siteMissions = sites;
                         Log($"site jobs: {sites.Count} ({string.Join(", ", sites.All.Select(s => $"{string.Join("+", s.Needs.Select(n => $"{n.Count} {n.Item}"))}"))})");
+                        // what a sector broadcasts: warp-in reports and scan sites (PDA), calls for help (dialogues)
+                        var pdaDir = new[] { scenario, content }.Where(d => !string.IsNullOrEmpty(d)).Select(d => Path.Combine(d, "Extras", "PDA"))
+                            .FirstOrDefault(d => File.Exists(Path.Combine(d, "PDA.yaml")));
+                        if (pdaDir != null)
+                        {
+                            var sector = new SectorSites();
+                            using (var y = new StreamReader(Path.Combine(pdaDir, "PDA.yaml")))
+                            using (var t = File.Exists(Path.Combine(pdaDir, "PDA.csv")) ? new StreamReader(Path.Combine(pdaDir, "PDA.csv")) : null)
+                                sector.LoadPda(y, t);
+                            var handled = new HashSet<string>(sites.All.Select(s => s.Start)
+                                .Concat(missions.Families.Where(f => !f.Job).Select(f => f.Start)) // jobs (a ship in distress) still call for help on arrival
+                                .Concat(contracts.OfferEntryDialogues).Concat(contracts.HandInEntryDialogues.Keys), StringComparer.Ordinal);
+                            using (var e = new StreamReader(dlg))
+                            using (var t = new StreamReader(dlgText))
+                                sector.LoadDialogues(e, t, handled);
+                            sectorSites = sector;
+                            var fights = new PdaFights();
+                            using (var y = new StreamReader(Path.Combine(pdaDir, "PDA.yaml")))
+                            using (var t = File.Exists(Path.Combine(pdaDir, "PDA.csv")) ? new StreamReader(Path.Combine(pdaDir, "PDA.csv")) : null)
+                                fights.Load(y, t);
+                            pdaFights = fights;
+                            Log($"fights: {fights.Count} PDA chapters with targets to destroy");
+                            Log($"sector reports: {sector.BriefingCount} briefings, {sector.ScanTypeCount} scan site types, calls for help: {string.Join(", ", sector.HelpCalls.Select(h => h.Start))}");
+                        }
                     }
                 }
                 catch (Exception e) { Log($"poi terminals: {e.Message}"); }
@@ -98,6 +122,7 @@ namespace VoxtaBridge
                 if (miningContracts is MiningContracts mcw) watch.AddRange(mcw.OfferEntryDialogues.Concat(mcw.HandInEntryDialogues.Keys));
                 if (tradeMissions is TradeMissions tmw) watch.AddRange(tmw.Families.Select(f => f.Start).Where(s => !s.StartsWith("TD_", StringComparison.Ordinal)));
                 if (siteMissions is SiteMissions smw) watch.AddRange(smw.All.Select(m => m.Start));
+                if (sectorSites is SectorSites ssw) watch.AddRange(ssw.HelpCalls.Select(h => h.Start));
                 idx.WatchDialogues = watch;
                 int scanned = 0, failed = 0;
                 // scenario prefabs first; base-game prefabs (e.g. BA_CrashedCV_…) only fill gaps, for the POI classification
@@ -115,6 +140,20 @@ namespace VoxtaBridge
                     }
                 }
                 traderIndex = idx;
+                if (tradeMissions is TradeMissions tmj)
+                {
+                    var jobStarts = new HashSet<string>(tmj.Families.Where(f => f.Job).Select(f => f.Start), StringComparer.Ordinal);
+                    var jobPrefabs = idx.PrefabsWithWatchedDialogues.Where(p => idx.Facts(p).WatchedDialogues.Any(jobStarts.Contains)).OrderBy(p => p).ToList();
+                    Log($"jobs: {jobStarts.Count} ({string.Join(", ", jobStarts.OrderBy(x => x))}) on {jobPrefabs.Count} prefabs ({string.Join(", ", jobPrefabs.Take(12))}{(jobPrefabs.Count > 12 ? ", …" : "")})");
+                }
+                if (sectorSites is SectorSites ssp)
+                {
+                    var hp = new Dictionary<string, HelpCall>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var prefab in idx.PrefabsWithWatchedDialogues)
+                        if (idx.Facts(prefab).WatchedDialogues.Select(ssp.Help).FirstOrDefault(h => h != null) is HelpCall h) hp[prefab] = h;
+                    helpPrefabs = hp;
+                    Log($"calls for help: {hp.Count} prefabs ({string.Join(", ", hp.Keys.OrderBy(x => x).Take(12))})");
+                }
                 if (siteMissions is SiteMissions smp)
                 {
                     var sp = new Dictionary<string, SiteMission>(StringComparer.OrdinalIgnoreCase);

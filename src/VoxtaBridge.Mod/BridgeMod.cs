@@ -416,6 +416,7 @@ namespace VoxtaBridge
             Log($"registered dedi packet receiver: {ok}");
             api.Application.Update += OnUpdate;
             ProbeHook();
+            FightHook();
         }
 
         static void OnUpdate()
@@ -494,6 +495,7 @@ namespace VoxtaBridge
                     .Prop("health", p.Health).Prop("oxygen", p.Oxygen).Prop("food", p.Food)
                     .Prop("isPilot", p.IsPilot).Prop("bagStacks", p.Bag?.Count ?? 0);
                 try { WriteNewStructures(j, p); } catch (Exception e) { Log($"new structures for {p.Name}: {e.Message}"); }
+                try { WriteDestroyed(j, p); } catch (Exception e) { Log($"destroyed blocks for {p.Name}: {e.Message}"); }
 
                 var active = ResolveActive(pf, p, config?.RequireOwnership ?? true, config?.TransferRangeMeters ?? 0);
                 var s = active.Structure;

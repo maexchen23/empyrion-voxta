@@ -21,6 +21,57 @@ public sealed record SiteJob(string Key, string Where, IReadOnlyList<(string Ite
         : Choice ? "a reward of the player's choice" : "a reward";
 }
 
+/// <summary>
+/// What the player's ship picks up in the current sector: the sector's warp-in report (kind "science", "security" or
+/// "sector"; <paramref name="FirstVisit"/> = discovered just now), a probe-scan site, and NPCs calling for help nearby.
+/// </summary>
+public sealed record SectorInfo(string Playfield, string? Briefing, string? BriefingKind, bool FirstVisit, ScanSiteInfo? Scan,
+    IReadOnlyList<HelpCallInfo> Calls, IReadOnlyList<TimedInfo>? Timed = null);
+
+/// <summary>
+/// A mission against the clock in this sector (RE2: the nebula's escape pods): state "active" or "done", the game time it
+/// runs out at and now (seconds), how many of how many are done (crew rescued).
+/// </summary>
+public sealed record TimedInfo(string Key, string Npc, string State, long EndsAtS, long? NowS, long Count, long Total)
+{
+    public long? LeftS => NowS is { } now ? Math.Max(0, EndsAtS - now) : null;
+}
+
+/// <summary>One wave of a scripted fight: targets (cores) to destroy, ships that spawn, delay before it, PDA message.</summary>
+public sealed record FightWave(int Targets, IReadOnlyList<string> Types, int Ships, string What, string? Allies, int DelayS, string? Message);
+
+/// <summary>
+/// A scripted fight the player is in (a PDA chapter: combat-site defense, bandit ambush, smuggler job): state "active",
+/// "completed" or "stopped"; <paramref name="Destroyed"/> = targets the player destroyed since it started (filled in by the
+/// module from the snapshot's block counts), null = unknown.
+/// </summary>
+public sealed record FightInfo(string Id, string Title, string State, string? StartMessage, string? After, IReadOnlyList<FightWave> Waves,
+    int? Destroyed = null)
+{
+    public int Total => Waves.Sum(w => w.Targets);
+    /// <summary>Waves fully cleared by the destroyed count.</summary>
+    public int Cleared(int destroyed)
+    {
+        int sum = 0, n = 0;
+        foreach (var w in Waves) { sum += w.Targets; if (destroyed >= sum) n++; else break; }
+        return n;
+    }
+}
+
+/// <summary>
+/// A probe-scan site: the ship's scanning table resolves its anomalies with the named probe. Probes = how many (rolled by
+/// the table on first use, worked out from its formula before that); ProbesMax when the roll can still change it. Gated = the
+/// scan only works during a mission ("waiting" / "open"), e.g. the nebula's pod scans.
+/// </summary>
+public sealed record ScanSiteInfo(string? Label, string ProbeName, long? Probes, bool Done, long? ProbesMax = null, string? Gated = null)
+{
+    public string? CountText => Probes is not > 0 ? null
+        : ProbesMax is { } max && max > Probes ? $"{Probes}-{max}" : Probes.ToString();
+}
+
+/// <summary>An NPC calling for help on the player's playfield (key = POI id). Specific = their exact need is known (after first contact).</summary>
+public sealed record HelpCallInfo(string Key, string Where, string Plea, bool Specific, bool Done);
+
 /// <summary>A mining contract token in the player's inventory: token id, name, faction, what it wants, the pay, how many.</summary>
 public sealed record HeldContract(long Token, string Name, string Faction, string Wants, long Credits, long Reputation, int Count);
 
@@ -104,6 +155,12 @@ public sealed record GameState
     public long? Credits { get; init; }
     /// <summary>Delivery jobs of the POIs on the player's playfield (null = not known this poll).</summary>
     public IReadOnlyList<SiteJob>? SiteJobs { get; init; }
+    /// <summary>What the ship picks up in this sector (null = not known this poll).</summary>
+    public SectorInfo? Sector { get; init; }
+    /// <summary>Scripted fights the player is in or just finished (null = not known this poll).</summary>
+    public IReadOnlyList<FightInfo>? Fights { get; init; }
+    /// <summary>Blocks the player destroyed, by block name, cumulative on their playfield server (null = none reported).</summary>
+    public IReadOnlyDictionary<string, int>? DestroyedBlocks { get; init; }
 
     public string? FactoryBlueprint { get; init; }
     public double? FactoryRemainingS { get; init; }
@@ -180,6 +237,24 @@ public sealed record GameState
         foreach (var job in SiteJobs?.Where(j => !j.Done).Take(2) ?? [])
             sb.AppendLine($"Job here: {job.Where} wants {job.NeedsText} in its '{job.Container}' container for {job.RewardText}" +
                           $"{(job.Rep != null ? $" (needs {job.Rep} standing)" : "")}; one time per player.");
+        // once the player talked to them, their request is a job (mission key "<poi id>-<playfield>#n"): no second line
+        foreach (var call in Sector?.Calls.Where(c => !c.Done && OpenMissions?.Any(m => m.Kind == "job" && m.Key.StartsWith(c.Key + "-", StringComparison.Ordinal)) != true).Take(2) ?? [])
+            sb.AppendLine($"Call for help here: {call.Where}{(call.Specific ? $" ({Short(call.Plea, 160)})" : "")}.");
+        foreach (var fight in Fights?.Where(x => x.State == "active") ?? [])
+        {
+            var d = fight.Destroyed ?? 0;
+            var cleared = fight.Cleared(d);
+            sb.AppendLine(cleared >= fight.Waves.Count
+                ? $"Combat: all {fight.Total} targets down{(fight.After != null ? $"; next: {fight.After}" : "")}."
+                : $"Combat: wave {cleared + 1} of {fight.Waves.Count}, {d} of {fight.Total} enemy cores destroyed.");
+        }
+        foreach (var t in Sector?.Timed?.Where(t => t.State == "active") ?? [])
+            sb.AppendLine(t.LeftS is > 0
+                ? $"Against the clock: {t.Npc}'s mission, {FormatDuration(t.LeftS.Value)} left, {t.Count} of {t.Total} done."
+                : $"Time ran out on the {t.Npc}'s mission: {t.Count} of {t.Total} done; return to the {t.Npc}.");
+        if (Sector?.Scan is { Done: false, Gated: null } scan)
+            sb.AppendLine($"Exploration site, not scanned yet: the ship's scanning table resolves the anomalies with {scan.ProbeName}" +
+                          $"{(scan.CountText is { } n ? $" ({n} needed)" : "")}.");
 
         if (FactoryBlueprint != null)
             sb.AppendLine(FactoryRemainingS is > 0
@@ -189,6 +264,8 @@ public sealed record GameState
         sb.Append("Use the empyrion_* tools for details (cargo, inventory).");
         return sb.ToString();
     }
+
+    private static string Short(string text, int max) => text.Length <= max ? text : text[..max].TrimEnd() + " …";
 
     private static string? Tank(string label, double? value, double? max) =>
         Percent(value, max) is { } p ? $"{label} {p:0}%" : null;

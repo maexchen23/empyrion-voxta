@@ -42,6 +42,12 @@ public static class GameEventSettings
         new("pursued_items_ready", "Pursued mission: all items in reach", On),
         new("new_mining_contract", "New mining contract", Silent),
         new("mining_site_job", "Job broadcast at a mining site (on arrival)", On),
+        new("sector_briefing", "Sector report (first visit of special sectors)", On),
+        new("new_job", "New job: beacon repair, ship in distress, probe scan (offers the items)", On),
+        new("space_fight", "Scripted fights: start, wave cleared, all enemies down", On),
+        new("timed_mission", "Missions against the clock: start, time warnings, progress, time up", On),
+        new("job_done", "Job done", Silent),
+        new("help_call", "Call for help on the local channel (on arrival)", On),
         new("mining_contract_done", "Mining contract handed in", Silent),
         new("blueprint_ready", "Factory blueprint ready", On),
     ];

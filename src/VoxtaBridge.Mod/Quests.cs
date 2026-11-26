@@ -61,7 +61,7 @@ namespace VoxtaBridge
         }
 
         /// <summary>The player's trader mission rows, one per trader (POI + trader position), with the family resolved.</summary>
-        static List<QuestRow> ReadQuests(string db, int playerId)
+        static List<QuestRow> ReadQuests(string db, int playerId, string currentPlayfield = null, string pursuedState = null)
         {
             var tm = tradeMissions;
             var idx = traderIndex;
@@ -71,7 +71,9 @@ namespace VoxtaBridge
                 c.Open();
                 using (var q = c.CreateCommand())
                 {
-                    q.CommandText = "SELECT name, value, state FROM DialogueVars WHERE type = 110 AND entityid = @p";
+                    // 110 = per player and NPC position (traders, foremen), 106 = per player and POI (beacons, ships in distress);
+                    // rows that belong to no mission family are dropped below
+                    q.CommandText = "SELECT name, value, state FROM DialogueVars WHERE type IN (106, 110) AND entityid = @p";
                     q.Parameters.AddWithValue("@p", playerId);
                     using (var r = q.ExecuteReader())
                         while (r.Read())
@@ -109,7 +111,91 @@ namespace VoxtaBridge
                 row.Mission = TradeMissions.State(row.Family, row.Vars);
                 list.Add(row);
             }
+            try { AddScanRows(db, playerId, currentPlayfield, pursuedState, list); }
+            catch (Exception e) { Log($"quests: scan sites: {e.Message}"); }
             return list;
+        }
+
+        static readonly Dictionary<string, MissionFamily> scanFamilies = new Dictionary<string, MissionFamily>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Probe scans as quests: the player's current sector if it is an unscanned scan site, and every sector where they
+        /// used the scanning table (the probe count is stored) but didn't finish. Need = the probe type × count (the stored
+        /// count, else the count the table's formula gives).
+        /// </summary>
+        static void AddScanRows(string db, int playerId, string currentPlayfield, string pursuedState, List<QuestRow> list)
+        {
+            var sites = sectorSites;
+            var idx = traderIndex;
+            if (sites == null || idx == null || sites.ScanTypeCount == 0) return;
+            var countVars = sites.ScanCountVars.ToList();
+            using (var c = new SqliteConnection($"Data Source={db};Read Only=True;"))
+            {
+                c.Open();
+                var playfields = new HashSet<string>(StringComparer.Ordinal);
+                if (!string.IsNullOrEmpty(currentPlayfield)) playfields.Add(currentPlayfield);
+                // the pursued scan stays listed (done or not) so it ends as "done", not "gone"
+                var pursuedPf = pursuedState != null && pursuedState.StartsWith("scan-", StringComparison.Ordinal) ? pursuedState.Substring(5) : null;
+                if (pursuedPf != null) playfields.Add(pursuedPf);
+                if (countVars.Count > 0)
+                    using (var q = c.CreateCommand())
+                    {
+                        q.CommandText = $"SELECT DISTINCT state FROM DialogueVars WHERE entityid = @p AND value > 0 AND name IN ({string.Join(",", countVars.Select((_, i) => "@n" + i))})";
+                        q.Parameters.AddWithValue("@p", playerId);
+                        for (var i = 0; i < countVars.Count; i++) q.Parameters.AddWithValue("@n" + i, countVars[i]);
+                        using (var r = q.ExecuteReader()) while (r.Read()) if (r[0] is string s) playfields.Add(s);
+                    }
+                foreach (var pf in playfields)
+                {
+                    string folder = null, system = null;
+                    double sx = 0, sy = 0, sz = 0;
+                    using (var q = c.CreateCommand())
+                    {
+                        q.CommandText = "SELECT p.planettype, p.sectorx, p.sectory, p.sectorz, ss.name FROM Playfields p LEFT JOIN SolarSystems ss ON ss.ssid = p.ssid WHERE p.name = @pf LIMIT 1";
+                        q.Parameters.AddWithValue("@pf", pf);
+                        using (var r = q.ExecuteReader())
+                            if (r.Read())
+                            {
+                                folder = r[0] as string; sx = Convert.ToDouble(r[1]); sy = Convert.ToDouble(r[2]); sz = Convert.ToDouble(r[3]); system = r[4] as string;
+                            }
+                    }
+                    // scans that wait for a mission (the nebula's pod scans) aren't jobs of their own: the mission names the probes
+                    if (!(sites.Scan(idx.PlanetTypeOf(folder), folder) is ScanSite site) || site.GateVar != null) continue;
+                    long Var(string name)
+                    {
+                        if (name == null) return 0;
+                        using (var q = c.CreateCommand())
+                        {
+                            q.CommandText = "SELECT value FROM DialogueVars WHERE entityid = @p AND name = @n AND state = @s LIMIT 1";
+                            q.Parameters.AddWithValue("@p", playerId);
+                            q.Parameters.AddWithValue("@n", name);
+                            q.Parameters.AddWithValue("@s", pf);
+                            var v = q.ExecuteScalar();
+                            return v == null || v is DBNull ? 0 : Convert.ToInt64(v);
+                        }
+                    }
+                    var scanned = Var(site.DoneVar) >= 1;
+                    if (scanned && pf != pursuedPf) continue;
+                    var count = (int)Var(site.CountVar);
+                    if (count <= 0) count = site.ProbeRange(Var(site.ScoreVar))?.Max ?? 1;
+                    MissionFamily fam;
+                    lock (scanFamilies)
+                        if (!scanFamilies.TryGetValue(site.Dialogue, out fam))
+                            scanFamilies[site.Dialogue] = fam = new MissionFamily { Name = site.Dialogue, Start = site.Dialogue, Job = true, Scan = true };
+                    list.Add(new QuestRow
+                    {
+                        State = "scan-" + pf, Name = site.Label ?? "Exploration site", Playfield = pf, System = system, Sx = sx, Sy = sy, Sz = sz,
+                        Family = fam,
+                        Mission = scanned
+                            ? new MissionState { Status = "none" }
+                            : new MissionState
+                            {
+                                Status = "open",
+                                Mission = new TradeMission { Number = 1, Dialogue = site.Dialogue, Needs = { new MissionNeed { Item = site.ProbeItem, Count = count } } },
+                            },
+                    });
+                }
+            }
         }
 
         static string ItemLabel(MissionNeed n)
@@ -162,6 +248,10 @@ namespace VoxtaBridge
             var where = $"{q.Name} ({q.Playfield})";
             switch (q.Mission.Status)
             {
+                case "open" when q.Family.Scan:
+                    return $"{where}: the ship's scanning table needs {NeedsText(q.Mission.Mission)} to resolve the anomalies";
+                case "open" when q.Family.Job:
+                    return $"{(TraderName(q.Family) is string npc && npc != q.Name ? $"{npc} at {where}" : where)} needs {NeedsText(q.Mission.Mission)}";
                 case "open":
                     var s = $"{where} wants {NeedsText(q.Mission.Mission)}";
                     if (q.Mission.FollowUp) s += " (optional follow-up; it trades already)";
@@ -217,7 +307,7 @@ namespace VoxtaBridge
             string here = null;
             try
             {
-                quests = ReadQuests(db, player.EntityId);
+                quests = ReadQuests(db, player.EntityId, player.Playfield, PursuedPoi(player.SteamId));
                 ReadSector(db, player.Playfield, out px, out py, out pz);
                 here = SystemOf(db, player.Playfield);
             }
@@ -262,6 +352,8 @@ namespace VoxtaBridge
         /// <summary>SteamID → the pursued trader (DialogueVars state key: POI id, trader position, playfield).</summary>
         static readonly Dictionary<string, string> pursuedQuests = new Dictionary<string, string>();
         static readonly Dictionary<string, (DateTime at, string json)> pursuedCache = new Dictionary<string, (DateTime, string)>();
+        /// <summary>SteamID → the playfield the cached quest status was read on.</summary>
+        static readonly Dictionary<string, string> lastQuestPlayfield = new Dictionary<string, string>();
         static bool pursuedLoaded;
 
         static string PursuedFile => Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? ".", "VoxtaBridge.pursued.txt");
@@ -318,16 +410,16 @@ namespace VoxtaBridge
             var save = SaveGameDir();
             if (save == null) return (500, Error("The save game folder was not found."));
             List<QuestRow> quests;
-            try { quests = ReadQuests(Path.Combine(save, "global.db"), player.EntityId); }
+            try { quests = ReadQuests(Path.Combine(save, "global.db"), player.EntityId, player.Playfield); }
             catch (Exception e) { return (500, Error("global.db: " + e.Message)); }
             bool Match(QuestRow q, Func<string, bool> test) => test(q.Name ?? "") || test(q.Playfield ?? "") || test($"{q.Name} ({q.Playfield})");
             var open = quests.Where(q => q.Mission.Status == "open" || q.Mission.Status == "locked").ToList();
             var hits = open.Where(q => Match(q, s => s.Equals(wanted, StringComparison.OrdinalIgnoreCase))).ToList();
             if (hits.Count == 0) hits = open.Where(q => Match(q, s => s.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
             if (hits.Count == 0)
-                return (200, Error($"No open trader mission matches '{wanted}'." + (open.Count > 0
+                return (200, Error($"No open mission or job matches '{wanted}'." + (open.Count > 0
                     ? " Open ones: " + string.Join("; ", open.Take(8).Select(q => $"{q.Name} ({q.Playfield})")) + "."
-                    : " The player has no open trader missions; they start by talking to a factory's trader.")));
+                    : " The player has no open missions; they start by talking to a factory's trader (or a beacon, a ship in distress).")));
             if (hits.Count > 1 && hits.Select(q => q.Name).Distinct().Count() > 1)
                 return (200, Error($"'{wanted}' matches several: " + string.Join("; ", hits.Take(8).Select(q => $"{q.Name} ({q.Playfield})")) + ". Name one."));
             var hit = hits[0];
@@ -337,8 +429,11 @@ namespace VoxtaBridge
             return (200, j.EndObj().ToString());
         }
 
-        /// <summary>"factory" when the trader's trades wait for the mission (also its follow-ups), else "trader".</summary>
-        static string MissionKind(QuestRow q) => q.Family.TradeGated ? "factory" : "trader";
+        /// <summary>
+        /// "factory" when the trader's trades wait for the mission (also its follow-ups), "job" for one-off jobs without a
+        /// trader (beacon, ship in distress), "scan" for a probe scan, else "trader".
+        /// </summary>
+        static string MissionKind(QuestRow q) => q.Family.Scan ? "scan" : q.Family.Job ? "job" : q.Family.TradeGated ? "factory" : "trader";
 
         /// <summary>
         /// /status, per online player, from global.db at most every 10 s:
@@ -444,29 +539,36 @@ namespace VoxtaBridge
         static void WriteQuestStatus(Json j, IEnumerable<DediPlayer> online)
         {
             var save = SaveGameDir();
-            var rows = new List<(string steamId, string pursuing, string missions, string offers, string sites)>();
+            var rows = new List<(string steamId, string pursuing, string missions, string offers, string sites, string sector)>();
             foreach (var p in online)
             {
                 if (p.SteamId == null) continue;
                 (DateTime at, string json) cached;
                 bool fresh;
-                lock (pursuedQuests) fresh = pursuedCache.TryGetValue(p.SteamId, out cached) && DateTime.UtcNow - cached.at < TimeSpan.FromSeconds(10);
+                // fresh for 10 s, but not across a playfield change: arrival news should come with the arrival
+                lock (pursuedQuests)
+                {
+                    fresh = pursuedCache.TryGetValue(p.SteamId, out cached) && DateTime.UtcNow - cached.at < TimeSpan.FromSeconds(10)
+                            && lastQuestPlayfield.TryGetValue(p.SteamId, out var lastPf) && lastPf == p.Playfield;
+                    lastQuestPlayfield[p.SteamId] = p.Playfield;
+                }
                 if (!fresh && save != null)
                 {
-                    string pursuing = null, missions, offers = null, sites = null;
+                    string pursuing = null, missions, offers = null, sites = null, sector = null;
                     try
                     {
-                        var quests = ReadQuests(Path.Combine(save, "global.db"), p.EntityId);
                         var state = PursuedPoi(p.SteamId);
+                        var quests = ReadQuests(Path.Combine(save, "global.db"), p.EntityId, p.Playfield, state);
                         if (state != null)
                         {
                             var q = quests.FirstOrDefault(x => x.State == state);
                             var o = new Json().Obj();
-                            if (q == null) o.Prop("status", "gone").Prop("line", "the pursued trader mission is no longer in the save");
+                            if (q == null) o.Prop("status", "gone").Prop("line", "the pursued mission is no longer in the save");
                             else
                             {
                                 var done = q.Mission.Status != "open" && q.Mission.Status != "locked";
-                                o.Prop("status", done ? "done" : q.Mission.Status).Prop("factory", q.Name).Prop("line", done ? $"{q.Name} ({q.Playfield}): mission done" + (q.Mission.Status == "unlocked" ? ", trades unlocked" : "") : QuestLine(q));
+                                o.Prop("status", done ? "done" : q.Mission.Status).Prop("factory", q.Name).Prop("kind", MissionKind(q))
+                                    .Prop("line", done ? $"{q.Name} ({q.Playfield}): mission done" + (q.Mission.Status == "unlocked" ? ", trades unlocked" : "") : QuestLine(q));
                                 if (q.Mission.Mission is TradeMission m && !done) WriteNeeds(o, m);
                             }
                             pursuing = o.EndObj().ToString();
@@ -484,19 +586,22 @@ namespace VoxtaBridge
                         missions = mj.EndArr().ToString();
                         if (miningContracts?.CooldownVar is string cv) offers = ReadContractOffers(Path.Combine(save, "global.db"), p.EntityId, cv, p.Playfield);
                         sites = ReadSiteJobs(Path.Combine(save, "global.db"), p.EntityId, p.Playfield);
+                        sector = ReadSector(Path.Combine(save, "global.db"), p.EntityId, p.Playfield);
+                        LogSectorChange(p, sector);
                     }
                     catch (Exception e)
                     {
                         pursuing = PursuedPoi(p.SteamId) == null ? null : new Json().Obj().Prop("status", "error").Prop("line", "global.db: " + e.Message).EndObj().ToString();
                         missions = null; // unknown: the module keeps its last list, so nothing reads as new
                     }
-                    cached = (DateTime.UtcNow, (pursuing ?? "") + "\u0001" + (missions ?? "") + "\u0001" + (offers ?? "") + "\u0001" + (sites ?? ""));
+                    cached = (DateTime.UtcNow, (pursuing ?? "") + "\u0001" + (missions ?? "") + "\u0001" + (offers ?? "") + "\u0001" + (sites ?? "") + "\u0001" + (sector ?? ""));
                     lock (pursuedQuests) pursuedCache[p.SteamId] = cached;
                 }
                 if (cached.json == null) continue;
                 var parts = cached.json.Split('\u0001');
                 rows.Add((p.SteamId, parts[0].Length > 0 ? parts[0] : null, parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null,
-                    parts.Length > 2 && parts[2].Length > 0 ? parts[2] : null, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null));
+                    parts.Length > 2 && parts[2].Length > 0 ? parts[2] : null, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null,
+                    parts.Length > 4 && parts[4].Length > 0 ? parts[4] : null));
             }
             j.Key("pursuing").Obj();
             foreach (var r in rows.Where(r => r.pursuing != null)) j.Key(r.steamId).Raw(r.pursuing);
@@ -505,6 +610,14 @@ namespace VoxtaBridge
             foreach (var r in rows.Where(r => r.missions != null)) j.Key(r.steamId).Raw(r.missions);
             j.EndObj();
             if (GameTimeSeconds() is long gameNow) j.Prop("gameTimeS", gameNow);
+            j.Key("sector").Obj();
+            foreach (var r in rows.Where(r => r.sector != null)) j.Key(r.steamId).Raw(r.sector);
+            j.EndObj();
+            // scripted fights: live (API1 PDA events), not cached
+            j.Key("fights").Obj();
+            foreach (var p in online.Where(p => p.SteamId != null))
+                if (ReadFights(p.EntityId) is string fj) j.Key(p.SteamId).Raw(fj);
+            j.EndObj();
             j.Key("siteJobs").Obj();
             foreach (var r in rows.Where(r => r.sites != null)) j.Key(r.steamId).Raw(r.sites);
             j.EndObj();

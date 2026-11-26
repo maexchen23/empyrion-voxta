@@ -57,6 +57,10 @@ namespace VoxtaBridge
         readonly Dictionary<string, PrefabTraders> prefabs = new Dictionary<string, PrefabTraders>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, List<PrefabTraders>> prefabsByTrader = new Dictionary<string, List<PrefabTraders>>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, HashSet<string>> foldersByPlanetType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<string, string> planetTypeByFolder = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The PlanetType a playfield folder declares ("EdenSpace_POI_ExploreT1_1" → "Exploration Site Class 1"), or null.</summary>
+        public string PlanetTypeOf(string folder) => folder != null && planetTypeByFolder.TryGetValue(folder, out var t) ? t : null;
         readonly Dictionary<string, List<PoiSpawn>> spawnsByGroup = new Dictionary<string, List<PoiSpawn>>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, FactionDef> factionsByName = new Dictionary<string, FactionDef>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<int, FactionDef> factionsById = new Dictionary<int, FactionDef>();
@@ -357,6 +361,7 @@ namespace VoxtaBridge
 
             if (!string.IsNullOrEmpty(planetType))
             {
+                planetTypeByFolder[folder] = planetType;
                 if (!foldersByPlanetType.TryGetValue(planetType, out var fs)) foldersByPlanetType[planetType] = fs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 fs.Add(folder);
             }

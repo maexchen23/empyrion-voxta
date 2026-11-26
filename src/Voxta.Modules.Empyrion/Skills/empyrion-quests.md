@@ -1,6 +1,6 @@
 ---
 name: empyrion-quests
-description: "Trader missions (factories that want items before they trade, work orders, follow-up jobs, the one mission the player pursues) and mining contracts from Orbital Refineries. Load when the player talks about a factory's request, a mission, what a trader wanted, why a factory won't trade, or mining contracts."
+description: "Trader missions (factories that want items before they trade, work orders, follow-up jobs, the one mission the player pursues) and mining contracts from Orbital Refineries. Load when the player talks about a factory's request, a mission, what a trader wanted, why a factory won't trade, mining contracts, mining-site jobs, special sectors (exploration, combat, distress calls) or UCH research."
 metadata:
   augmentations: empyrion
   tools: empyrion_list_quests empyrion_pursue_quest empyrion_mining_contracts empyrion_where_to_buy empyrion_find_item empyrion_transfer_items
@@ -48,21 +48,6 @@ metadata:
   player can't choose the faction yet, say so and suggest taking whatever the refinery offers.
 - "When can I get the next contract?": empyrion_cooldowns (or the contract check) lists the refineries within 100 LY,
   the nearest one that is ready (or ready within 10 minutes) first. Game time stops while the server is down.
-
-## Mining sites
-
-- In RE2 mining sectors an NPC ship broadcasts a one-time job (e.g. 6,000 Ilmenite Ore into its CargoDrop container for
-  200,000 credits). On arrival you hear it like a broadcast on the local channel, before the player talked to them;
-  the live context keeps it as "Job here" until it is done. Say whether the load fits into the ship's harvest
-  controllers when you're told; ore is bulky. Hand-in: the ore into the named container, then talk to the NPC
-  (the character can move the ore there while the player is on that POI).
-
-## UCH research (unlock points)
-
-- Research reports are crafted in a constructor (Components tab). With the "Research Unlock Points" mission active and
-  a report in the inventory, the research computer in a UCH Research Vessel's lab gives unlock points.
-- Every 3 hours (game time), and **each vessel takes only one report** from the player. empyrion_cooldowns says when
-  the next run is possible and lists the vessels already used, so suggest a different vessel.
 - Where to hand in: Polaris Orbital Refineries, the orbital distribution centers, and mining-site vessels whose own
   quest the player finished. The contract check (`mine` = yes) names the nearest ones the player found. Handing in has
   no cooldown; only getting a new contract does.
@@ -75,3 +60,52 @@ metadata:
   Polaris, they can choose the faction.
 - When the player takes a contract or hands one in, you may be told (silently by default, per the module settings).
   On a new one, the check with `mine` = yes shows what is still missing; on a hand-in, a short well done is enough.
+
+## Mining sites
+
+- In RE2 mining sectors an NPC ship broadcasts a one-time job (e.g. 6,000 Ilmenite Ore into its CargoDrop container for
+  200,000 credits). On arrival you hear it like a broadcast on the local channel, before the player talked to them;
+  the live context keeps it as "Job here" until it is done. Say whether the load fits into the ship's harvest
+  controllers when you're told; ore is bulky. Hand-in: the ore into the named container, then talk to the NPC
+  (the character can move the ore there while the player is on that POI).
+
+## Special sectors (exploration, combat, distress)
+
+- On the first visit of a special sector you may hear the sector's report, as the ship's sensors or the local channel
+  picked it up (a science or security assessment). Pass it on briefly, in your own words; you know only what it says.
+- At exploration sites the anomalies need the ship's **scanning table** and probes; you're told which probe and how many
+  (the table rolls it on first use; normally 1). "Exploration site, not scanned yet" stays in the live context until the scan is done.
+- NPCs calling for help (damaged ships, a besieged station) are heard on the local channel on arrival. Before the player
+  talks to them you only know their plea, not exactly what they need: the player has to go and ask. Once the player
+  did, the exact request shows up ("Call for help here: … (their words)").
+- Never promise or guess rewards for these.
+
+## Jobs: beacons, ships in distress, probe scans
+
+- Some requests are one-off jobs, listed with the missions (`empyrion_list_quests`, pursue them like any mission):
+  an **emergency beacon** that needs repair items (rolled when the player first accesses it), a **ship in distress**
+  that needs a repair kit (once the player talked to them), and a **probe scan** at an exploration site.
+- The items always have to be in the **player's inventory**: the beacon and the ship check the inventory, the scanning
+  table takes the probes from it. When you're told about a new job, say what it needs and what is in reach, then offer
+  to move it into the inventory (`empyrion_transfer_items`). If none is in reach, offer to craft it (`empyrion_craft`;
+  `empyrion_plan_craft` first when unsure: repair kits need a Large or Advanced Constructor, Decoration tab).
+- Don't tell the player who owns a beacon before they repaired it; that's only revealed afterwards.
+
+## UCH research (unlock points)
+
+- Research reports are crafted in a constructor (Components tab). With the "Research Unlock Points" mission active and
+  a report in the inventory, the research computer in a UCH Research Vessel's lab gives unlock points.
+- Every 3 hours (game time), and **each vessel takes only one report** from the player. empyrion_cooldowns says when
+  the next run is possible and lists the vessels already used, so suggest a different vessel.
+
+## Fights and the clock
+
+- Scripted fights (a combat site's defense, a bandit ambush at a beacon, smuggler jobs) come in waves. You hear when
+  one starts (how many waves, what ships), when a wave is down (what comes next and when) and when all enemy ships are
+  down (and the next step, e.g. "Deactivate the emergency beacon"). The live context shows the wave and the cores
+  destroyed. Talk like a tactical officer: short, during a fight one sentence at a time.
+- Counted are the enemy cores the player destroys; kills by allied ships don't count, so "all down" may only come
+  when the game ends the fight.
+- Missions against the clock (the nebula's escape pods: 5 crew, 10 minutes of oxygen): you hear the start (with the
+  probes it takes: one narrow-band scan per pod), warnings at 5, 2 and 1 minute, each rescue, and when time is up.
+  Probes have to be in the player's inventory for the scanning table: offer to move or craft them right at the start.

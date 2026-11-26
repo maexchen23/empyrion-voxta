@@ -28,6 +28,8 @@
         <Compile Include="..\..\src\VoxtaBridge.Mod\MiningContracts.cs" Link="MiningContracts.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\PdaRepeats.cs" Link="PdaRepeats.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\SiteMissions.cs" Link="SiteMissions.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\SectorSites.cs" Link="SectorSites.cs" />
+        <Compile Include="..\..\src\VoxtaBridge.Mod\PdaFights.cs" Link="PdaFights.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\LiveBoxes.cs" Link="LiveBoxes.cs" />
         <Compile Include="..\..\src\VoxtaBridge.Mod\ChatText.cs" Link="ChatText.cs" />
     </ItemGroup>

@@ -56,6 +56,25 @@ namespace VoxtaBridge
         public string QuantityVar;
         /// <summary>Per-POI variable that is 1 once the mission is done (then the NPC trades); null = the CanTrade scheme.</summary>
         public string DoneVar;
+        /// <summary>
+        /// Values of <see cref="DoneVar"/> the start dialogue still sends to the item check (Foreman: 0 and 2; beacon: 0).
+        /// Empty = not read from the dialogue: then done is "1", or <see cref="DoneFrom"/>.
+        /// </summary>
+        public HashSet<int> OpenValues = new HashSet<int>();
+        /// <summary>Values from which the start dialogue no longer asks (e.g. <c>Eden_Completed &gt;= 1</c>), or null.</summary>
+        public int? DoneFrom;
+        /// <summary>A one-off job with no trader behind it (an emergency beacon, a ship in distress), not a trade unlock.</summary>
+        public bool Job;
+        /// <summary>A probe scan with the ship's scanning table (made up by the bridge from the sector, no dialogue rows).</summary>
+        public bool Scan;
+
+        /// <summary>Whether this value of the done variable means the items were handed in.</summary>
+        public bool IsDone(int value)
+        {
+            if (OpenValues.Count > 0) return !OpenValues.Contains(value);
+            if (DoneFrom.HasValue) return value >= DoneFrom.Value;
+            return value == 1;
+        }
     }
 
     /// <summary>A player's state at one trader, read from the save's DialogueVars rows (type 110) of that POI.</summary>
@@ -190,6 +209,7 @@ namespace VoxtaBridge
                 byStart[fam.Start] = fam;
             }
             LoadQuantityMissions(blocks, byName);
+            LoadRolledMissions(blocks, byName);
         }
 
         static readonly Regex TypeByMission = new Regex(@"if\s*\(\s*(\w+)\s*==\s*(\d+)\s*\)\s*(\w+)\s*=\s*'([^']+)'", RegexOptions.Compiled);
@@ -229,11 +249,113 @@ namespace VoxtaBridge
                     Start = start.Name, Name = prefix, NpcNameKey = start.First("NPCName"), MissionVar = missionVar,
                     QuantityVar = qty.Groups[2].Value, DoneVar = done, TradeGated = text.IndexOf("OpenTraderWindow()", StringComparison.Ordinal) >= 0,
                 };
+                fam.Job = !fam.TradeGated;
+                ReadDoneGates(fam, start, byName, b => b.Lines.Any(l => l.value.Contains("HasItem(" + typeVar)));
                 foreach (var m in types.Where(m => m.Groups[1].Value == missionVar && m.Groups[3].Value == typeVar))
                 {
                     var n = int.Parse(m.Groups[2].Value);
                     fam.Missions[n] = new TradeMission { Number = n, Dialogue = handIn.Name, Needs = { new MissionNeed { Item = m.Groups[4].Value } } };
                 }
+                families[fam.Name] = fam;
+                byStart[fam.Start] = fam;
+            }
+        }
+
+        static readonly Regex GateCond = new Regex(@"^""\s*(\w+)\s*(==|>=)\s*(\d+)\s*""$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Which values of the done variable still lead to the item check: the start's <c>NextIf "Done == v"</c> branches
+        /// whose target reaches a block that checks the items within 3 steps (not through the start again), and
+        /// <c>"Done &gt;= v"</c> branches that don't (= done from v on).
+        /// </summary>
+        static void ReadDoneGates(MissionFamily fam, Block start, Dictionary<string, Block> byName, Func<Block, bool> asksItems)
+        {
+            bool Reaches(string target)
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal) { start.Name };
+                var frontier = new List<string> { target };
+                for (var depth = 0; depth <= 3 && frontier.Count > 0; depth++)
+                {
+                    var next = new List<string>();
+                    foreach (var name in frontier)
+                    {
+                        if (!seen.Add(name) || !byName.TryGetValue(name, out var b)) continue;
+                        if (asksItems(b)) return true;
+                        next.AddRange(b.Lines.Where(l => l.key.StartsWith("Next_", StringComparison.Ordinal) || l.key.StartsWith("OptionNext_", StringComparison.Ordinal))
+                            .Select(l => l.value.Split(',')[0].Trim()));
+                    }
+                    frontier = next;
+                }
+                return false;
+            }
+            foreach (var (key, cond) in start.Lines.Where(l => l.key.StartsWith("NextIf_", StringComparison.Ordinal)))
+            {
+                var g = GateCond.Match(cond.Trim());
+                if (!g.Success || g.Groups[1].Value != fam.DoneVar) continue;
+                var v = int.Parse(g.Groups[3].Value);
+                var target = start.Same("Next", key)?.Split(',')[0].Trim();
+                if (target == null) continue;
+                var open = Reaches(target);
+                if (g.Groups[2].Value == "==") { if (open) fam.OpenValues.Add(v); }
+                else if (!open && (fam.DoneFrom == null || v < fam.DoneFrom)) fam.DoneFrom = v;
+            }
+        }
+
+        static readonly Regex RollVar = new Regex(@"\b(\w+)\s*=\s*Random\(\s*(\d+)\s*,\s*(\d+)\s*\)", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Jobs whose request is rolled from a few fixed variants (RE2's ships in distress, <c>Eden_DistressCol_*</c>): the
+        /// first talk rolls a per-POI variable (<c>Eden_Randomize = Random(1,5)</c>), a step picks a greeting by its value
+        /// (<c>NextIf "Eden_Randomize &gt;= 3"</c>), each greeting asks for a fixed item (<c>OptionIf HasItem('Eden_RepairKitWarp', 1)</c>),
+        /// and the hand-in sets a per-POI done variable that the start checks.
+        /// </summary>
+        void LoadRolledMissions(List<Block> blocks, Dictionary<string, Block> byName)
+        {
+            foreach (var start in blocks.Where(b => b.Name.EndsWith("_Init", StringComparison.Ordinal) || b.Name.EndsWith("_Start", StringComparison.Ordinal)))
+            {
+                if (byStart.ContainsKey(start.Name)) continue;
+                var prefix = start.Name.Substring(0, start.Name.LastIndexOf('_'));
+                var family = blocks.Where(b => b.Name.StartsWith(prefix + "_", StringComparison.Ordinal)).ToList();
+                var poiVars = new HashSet<string>(family.SelectMany(b => b.All("Variable")).Select(v => VariableDecl.Match(v))
+                    .Where(m => m.Success && m.Groups[2].Value.StartsWith("dbplayerpoi", StringComparison.Ordinal)).Select(m => m.Groups[1].Value), StringComparer.Ordinal);
+                if (poiVars.Count < 2) continue;
+                var roll = family.SelectMany(b => b.All("Execute")).Select(e => RollVar.Match(e)).FirstOrDefault(m => m.Success && poiVars.Contains(m.Groups[1].Value));
+                if (roll == null) continue;
+                var sel = roll.Groups[1].Value;
+                int lo = int.Parse(roll.Groups[2].Value), hi = int.Parse(roll.Groups[3].Value);
+                var chooser = family.FirstOrDefault(b =>
+                {
+                    var conds = b.Lines.Where(l => l.key.StartsWith("NextIf_", StringComparison.Ordinal)).ToList();
+                    return conds.Count > 1 && conds.All(l => GateCond.Match(l.value.Trim()) is Match c && c.Success && c.Groups[1].Value == sel);
+                });
+                if (chooser == null) continue;
+                var fam = new MissionFamily { Start = start.Name, Name = prefix, NpcNameKey = start.First("NPCName"), MissionVar = sel, Job = true };
+                for (var v = lo; v <= hi; v++)
+                    foreach (var (key, cond) in chooser.Lines.Where(l => l.key.StartsWith("NextIf_", StringComparison.Ordinal)))
+                    {
+                        var c = GateCond.Match(cond.Trim());
+                        var n = int.Parse(c.Groups[3].Value);
+                        if (!(c.Groups[2].Value == "==" ? v == n : v >= n)) continue;
+                        var target = chooser.Same("Next", key)?.Split(',')[0].Trim();
+                        if (target != null && byName.TryGetValue(target, out var greet) && ParseMission(greet, v) is TradeMission tm) fam.Missions[v] = tm;
+                        break;
+                    }
+                if (fam.Missions.Count == 0) continue;
+                // done: the per-POI variable the hand-ins set and the start checks
+                var handIns = fam.Missions.Values.SelectMany(m => byName.TryGetValue(m.Dialogue, out var g)
+                    ? g.Lines.Where(l => l.key.StartsWith("OptionNext_", StringComparison.Ordinal)).Select(l => l.value.Trim()) : Enumerable.Empty<string>())
+                    .Where(byName.ContainsKey).Select(n => byName[n]).ToList();
+                foreach (var (key, cond) in start.Lines.Where(l => l.key.StartsWith("NextIf_", StringComparison.Ordinal)))
+                {
+                    var g = GateCond.Match(cond.Trim());
+                    if (!g.Success || g.Groups[1].Value == sel || !poiVars.Contains(g.Groups[1].Value)) continue;
+                    var sets = new Regex(@"\b" + Regex.Escape(g.Groups[1].Value) + @"\s*=\s*\d+");
+                    if (!handIns.Any(h => h.All("Execute").Concat(h.All("OptionExecute")).Any(e => e.Contains("RemoveItem(") && sets.IsMatch(e)))) continue;
+                    fam.DoneVar = g.Groups[1].Value;
+                    break;
+                }
+                if (fam.DoneVar == null) continue;
+                ReadDoneGates(fam, start, byName, b => b.All("OptionIf").Any(c => c.Contains("HasItem(")));
                 families[fam.Name] = fam;
                 byStart[fam.Start] = fam;
             }
@@ -308,11 +430,16 @@ namespace VoxtaBridge
             {
                 // one mission per NPC: done → it trades; else the rolled item, the rolled amount
                 vars.TryGetValue(fam.DoneVar, out var done);
-                if (done == 1) return new MissionState { Status = fam.TradeGated ? "unlocked" : "none", CanTrade = 1 };
+                if (fam.IsDone(done)) return new MissionState { Status = fam.TradeGated ? "unlocked" : "none", CanTrade = 1 };
                 if (n > 0 && fam.Missions.TryGetValue(n, out var qm))
                 {
-                    vars.TryGetValue(fam.QuantityVar, out var count);
-                    var rolled = new TradeMission { Number = qm.Number, Dialogue = qm.Dialogue, Needs = qm.Needs.Select(x => new MissionNeed { Item = x.Item, Count = count }).ToList() };
+                    var count = 0;
+                    if (fam.QuantityVar != null) vars.TryGetValue(fam.QuantityVar, out count);
+                    var rolled = new TradeMission
+                    {
+                        Number = qm.Number, Dialogue = qm.Dialogue,
+                        Needs = qm.Needs.Select(x => new MissionNeed { Item = x.Item, TokenId = x.TokenId, Count = fam.QuantityVar != null ? count : x.Count }).ToList(),
+                    };
                     return new MissionState { Status = "open", Mission = rolled };
                 }
                 return new MissionState { Status = fam.TradeGated ? "locked" : "none" };

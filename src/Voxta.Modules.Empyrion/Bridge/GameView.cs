@@ -1406,6 +1406,30 @@ public sealed class GameView
                     Array(x, "needs").Select(n => (Str(n, "item") ?? "", Str(n, "name") ?? Str(n, "item") ?? "?", Long(n, "count") ?? 0)).ToList(),
                     Str(x, "container") ?? "quest", Long(x, "credits") ?? 0, Bool(x, "choice") == true, Str(x, "rep"), Bool(x, "done") == true)).ToList()
                 : null,
+            Sector = SteamId != null && _root.TryGetProperty("sector", out var sec) && sec.ValueKind == JsonValueKind.Object &&
+                     sec.TryGetProperty(SteamId, out var mySector) && mySector.ValueKind == JsonValueKind.Object
+                ? new SectorInfo(Str(mySector, "playfield") ?? "", Str(mySector, "briefing"), Str(mySector, "briefingKind"),
+                    Bool(mySector, "firstVisit") == true,
+                    mySector.TryGetProperty("scan", out var scan) && scan.ValueKind == JsonValueKind.Object
+                        ? new ScanSiteInfo(Str(scan, "label"), Str(scan, "probeName") ?? Str(scan, "probe") ?? "probes",
+                            Long(scan, "probes") ?? Long(scan, "probesMin"), Bool(scan, "done") == true, Long(scan, "probesMax"), Str(scan, "gated"))
+                        : null,
+                    Array(mySector, "calls").Select(c => new HelpCallInfo(Str(c, "key") ?? "", Str(c, "where") ?? "a ship nearby", Str(c, "plea") ?? "",
+                        Bool(c, "specific") == true, Bool(c, "done") == true)).ToList(),
+                    Array(mySector, "timed").Select(t => new TimedInfo(Str(t, "key") ?? "", Str(t, "npc") ?? "NPC", Str(t, "state") ?? "",
+                        Long(t, "endsAtS") ?? 0, Long(t, "nowS"), Long(t, "count") ?? 0, Long(t, "total") ?? 0)).ToList())
+                : null,
+            Fights = SteamId != null && _root.TryGetProperty("fights", out var fi) && fi.ValueKind == JsonValueKind.Object
+                ? fi.TryGetProperty(SteamId, out var myFights) && myFights.ValueKind == JsonValueKind.Array
+                    ? myFights.EnumerateArray().Select(f => new FightInfo(Str(f, "id") ?? "", Str(f, "title") ?? "", Str(f, "state") ?? "",
+                        Str(f, "startMessage"), Str(f, "after"),
+                        Array(f, "waves").Select(w => new FightWave((int)(Long(w, "targets") ?? 0), (Str(w, "types") ?? "CoreNPC").Split(','),
+                            (int)(Long(w, "ships") ?? 0), Str(w, "what") ?? "", Str(w, "allies"), (int)(Long(w, "delayS") ?? 0), Str(w, "message"))).ToList())).ToList()
+                    : []
+                : null,
+            DestroyedBlocks = _pfPlayer is { } dp && dp.TryGetProperty("destroyed", out var de) && de.ValueKind == JsonValueKind.Object
+                ? de.EnumerateObject().Where(x => x.Value.ValueKind == JsonValueKind.Number).ToDictionary(x => x.Name, x => x.Value.GetInt32())
+                : null,
             FactoryBlueprint = a is { } f1 && f1.TryGetProperty("factory", out var fac) ? Str(fac, "blueprint") : null,
             FactoryRemainingS = a is { } f2 && f2.TryGetProperty("factory", out var fac2) ? Get(fac2, "remainingS") : null,
         };
