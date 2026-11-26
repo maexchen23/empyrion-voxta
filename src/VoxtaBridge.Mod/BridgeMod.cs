@@ -283,6 +283,8 @@ namespace VoxtaBridge
                 if (path == "/quests") return HandleQuests(body);
                 if (path == "/quest-pursue") return HandlePursueQuest(body);
                 if (path == "/mining-contracts") return HandleMiningContracts(body);
+                if (path == "/cooldowns") return HandleCooldowns(body);
+                if (path == "/site-cargo") return HandleSiteCargo(body);
                 if (path == "/chat-say") return HandleChatSay(body);
                 if (path == "/marks") return HandleMarks(body);
                 if (path == "/microjump") return HandleMicroJump(body);
@@ -343,7 +345,7 @@ namespace VoxtaBridge
             {
                 return (200, new Json().Obj().Prop("ok", true).Prop("mod", ModName)
                     .Prop("version", Assembly.GetExecutingAssembly().GetName().Version.ToString())
-                    .Prop("mode", mode.ToString()).Prop("uptimeS", (long)(DateTime.UtcNow - startedAt).TotalSeconds)
+                    .Prop("mode", mode.ToString()).Prop("uptimeS", (long)(DateTime.UtcNow - startedAt).TotalSeconds).Prop("gameTimeS", GameTimeSeconds())
                     .EndObj().ToString());
             }
 

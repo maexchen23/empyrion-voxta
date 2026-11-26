@@ -49,6 +49,13 @@ namespace VoxtaBridge
         public int? WorkOrderToken;
         public int? WorkOrderPrice;
         public SortedDictionary<int, TradeMission> Missions = new SortedDictionary<int, TradeMission>();
+        /// <summary>
+        /// Missions whose amount is rolled per player (RE2 Mining Foreman: "Eden_Quantity"): the needs' count comes from this
+        /// per-POI variable; null = fixed amounts.
+        /// </summary>
+        public string QuantityVar;
+        /// <summary>Per-POI variable that is 1 once the mission is done (then the NPC trades); null = the CanTrade scheme.</summary>
+        public string DoneVar;
     }
 
     /// <summary>A player's state at one trader, read from the save's DialogueVars rows (type 110) of that POI.</summary>
@@ -182,6 +189,54 @@ namespace VoxtaBridge
                 families[fam.Name] = fam;
                 byStart[fam.Start] = fam;
             }
+            LoadQuantityMissions(blocks, byName);
+        }
+
+        static readonly Regex TypeByMission = new Regex(@"if\s*\(\s*(\w+)\s*==\s*(\d+)\s*\)\s*(\w+)\s*=\s*'([^']+)'", RegexOptions.Compiled);
+        static readonly Regex HasVarItem = new Regex(@"HasItem\(\s*(\w+)\s*,\s*(\w+)\s*\)", RegexOptions.Compiled);
+        static readonly Regex SetsOne = new Regex(@"\b(\w+)\s*=\s*1\b(?!\s*[=.])", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Missions shaped like RE2's Mining Foreman (<c>Eden_PolarisForeman_*</c>): the start dialogue maps a rolled mission
+        /// number to an item (<c>if (Eden_Mission == 1) Type = 'EnergyCellLarge'</c>), the amount is a per-player-and-POI
+        /// variable (<c>HasItem(Type, Eden_Quantity)</c>), and the hand-in sets a done variable to 1 and opens the trader.
+        /// One mission per NPC; afterwards it trades, so these count as factory (trade-unlock) missions.
+        /// </summary>
+        void LoadQuantityMissions(List<Block> blocks, Dictionary<string, Block> byName)
+        {
+            foreach (var start in blocks.Where(b => b.Name.EndsWith("_Init", StringComparison.Ordinal)))
+            {
+                var poiVars = start.All("Variable").Select(v => VariableDecl.Match(v)).Where(m => m.Success && m.Groups[2].Value.StartsWith("dbplayerpoi", StringComparison.Ordinal))
+                    .Select(m => m.Groups[1].Value).ToList();
+                if (poiVars.Count < 2) continue;
+                var types = start.All("Execute").SelectMany(e => TypeByMission.Matches(e).Cast<Match>())
+                    .Where(m => poiVars.Contains(m.Groups[1].Value)).ToList();
+                if (types.Count < 2) continue;
+                var missionVar = types[0].Groups[1].Value;
+                var typeVar = types[0].Groups[3].Value;
+                var prefix = start.Name.Substring(0, start.Name.Length - "_Init".Length);
+                var family = blocks.Where(b => b.Name.StartsWith(prefix + "_", StringComparison.Ordinal)).ToList();
+                var text = string.Join("\n", family.SelectMany(b => b.Lines.Select(l => l.value)));
+                var qty = HasVarItem.Matches(text).Cast<Match>().FirstOrDefault(m => m.Groups[1].Value == typeVar && poiVars.Contains(m.Groups[2].Value));
+                if (qty == null) continue;
+                // the hand-in: the block that removes the item; it sets the done variable to 1
+                var handIn = family.FirstOrDefault(b => b.All("Execute").Concat(b.All("OptionExecute")).Any(e => e.Contains("RemoveItem(" + typeVar)));
+                var done = handIn?.All("Execute").Concat(handIn.All("OptionExecute")).SelectMany(e => SetsOne.Matches(e).Cast<Match>())
+                    .Select(m => m.Groups[1].Value).FirstOrDefault(poiVars.Contains);
+                if (done == null) continue;
+                var fam = new MissionFamily
+                {
+                    Start = start.Name, Name = prefix, NpcNameKey = start.First("NPCName"), MissionVar = missionVar,
+                    QuantityVar = qty.Groups[2].Value, DoneVar = done, TradeGated = text.IndexOf("OpenTraderWindow()", StringComparison.Ordinal) >= 0,
+                };
+                foreach (var m in types.Where(m => m.Groups[1].Value == missionVar && m.Groups[3].Value == typeVar))
+                {
+                    var n = int.Parse(m.Groups[2].Value);
+                    fam.Missions[n] = new TradeMission { Number = n, Dialogue = handIn.Name, Needs = { new MissionNeed { Item = m.Groups[4].Value } } };
+                }
+                families[fam.Name] = fam;
+                byStart[fam.Start] = fam;
+            }
         }
 
         static TradeMission ParseMission(Block b, int number)
@@ -249,6 +304,19 @@ namespace VoxtaBridge
         public static MissionState State(MissionFamily fam, IDictionary<string, int> vars)
         {
             vars.TryGetValue(fam.MissionVar, out var n);
+            if (fam.DoneVar != null)
+            {
+                // one mission per NPC: done → it trades; else the rolled item, the rolled amount
+                vars.TryGetValue(fam.DoneVar, out var done);
+                if (done == 1) return new MissionState { Status = fam.TradeGated ? "unlocked" : "none", CanTrade = 1 };
+                if (n > 0 && fam.Missions.TryGetValue(n, out var qm))
+                {
+                    vars.TryGetValue(fam.QuantityVar, out var count);
+                    var rolled = new TradeMission { Number = qm.Number, Dialogue = qm.Dialogue, Needs = qm.Needs.Select(x => new MissionNeed { Item = x.Item, Count = count }).ToList() };
+                    return new MissionState { Status = "open", Mission = rolled };
+                }
+                return new MissionState { Status = fam.TradeGated ? "locked" : "none" };
+            }
             vars.TryGetValue("CanTrade", out var canTrade);
             var st = new MissionState { CanTrade = canTrade };
             if (n > 0 && fam.Missions.TryGetValue(n, out var m))

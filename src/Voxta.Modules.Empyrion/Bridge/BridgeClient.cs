@@ -137,14 +137,31 @@ public sealed class BridgeClient
     }
 
     /// <summary>POST /mining-contracts: the contract table filtered by ore/faction, or (mine) the player's contracts and ore in reach.</summary>
-    public Task<JsonDocument> MiningContractsAsync(string? ore, string? faction, bool mine, string? steamId, CancellationToken cancellationToken)
+    public Task<JsonDocument> MiningContractsAsync(string? ore, string? faction, bool mine, string? steamId, CancellationToken cancellationToken, bool advise = false)
     {
         var form = new List<KeyValuePair<string, string>>();
         if (!string.IsNullOrWhiteSpace(ore)) form.Add(new("ore", ore.Trim()));
         if (!string.IsNullOrWhiteSpace(faction)) form.Add(new("faction", faction.Trim()));
-        if (mine) form.Add(new("mine", "1"));
+        if (mine || advise) form.Add(new("mine", "1"));
+        if (advise) form.Add(new("advise", "1"));
         if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
         return PostFormAsync("/mining-contracts", form, cancellationToken);
+    }
+
+    /// <summary>POST /site-cargo: free harvest controller space on the player's ship vs. the load ("Item:count,…").</summary>
+    public Task<JsonDocument> SiteCargoAsync(IEnumerable<(string Item, long Count)> items, string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>> { new("items", string.Join(",", items.Select(i => $"{i.Item}:{i.Count}"))) };
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/site-cargo", form, cancellationToken);
+    }
+
+    /// <summary>POST /cooldowns: refinery contract cooldowns and repeatable PDA missions with a waiting time.</summary>
+    public Task<JsonDocument> CooldownsAsync(string? steamId, CancellationToken cancellationToken)
+    {
+        var form = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrWhiteSpace(steamId)) form.Add(new("player", steamId.Trim()));
+        return PostFormAsync("/cooldowns", form, cancellationToken);
     }
 
     /// <summary>POST /quest-pursue: pursue one trader mission (its line goes into the live context), or "none".</summary>

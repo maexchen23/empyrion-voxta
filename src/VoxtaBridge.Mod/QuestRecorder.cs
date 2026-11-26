@@ -141,6 +141,7 @@ namespace VoxtaBridge
             lock (pdaActive)
             {
                 if (psi.StateChange == PdaStateChange.ChapterActivated) pdaActive[psi.PlayerId] = psi.Name;
+                if (psi.StateChange == PdaStateChange.ChapterCompleted) RecordPdaCompletion(psi.PlayerId, psi.Name);
                 else if (pdaActive.TryGetValue(psi.PlayerId, out var cur) && cur == psi.Name) pdaActive.Remove(psi.PlayerId);
             }
             Log($"API1 PDA {psi.StateChange} '{psi.Name}' (player {psi.PlayerId})");

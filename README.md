@@ -33,10 +33,15 @@ switches your ships on her own when you set a watch, all through the bridge. Mor
 - **Points of interest**: what is around, faction standing, turrets, which places are dangerous, info terminals,
   planet descriptions.
 - **Trader missions**: remembers the missions factories and shops gave you (the game doesn't track them), what they
-  want, rewards and work orders; keeps one you pursue in view and counts its items in your inventory.
+  want, rewards and work orders; keeps one you pursue in view and speaks up once everything it wants is in reach.
+  The Mining Foreman counts as a factory: one job, then he trades.
 - **Mining contracts** (Reforged Eden 2 Orbital Refineries): knows every contract ("does anyone want magnesium?"),
-  checks the contracts you carry against the ore in reach, and fills a quest POI's hand-in container while you are
-  inside that POI.
+  checks the contracts you carry against the ore in reach, recommends which faction to pick (reputation or quick
+  cash), names the nearest hand-in points, and fills a quest POI's hand-in container while you are inside that POI.
+- **Mining sites**: on arrival in a mining sector, passes on the local NPC's job ("6,000 Ilmenite Ore for 200k") and
+  whether the load fits into your harvest controllers.
+- **Cooldowns**: when each refinery within 100 LY gives the next contract (nearest ready one first), and when you can
+  do UCH research for unlock points again, plus the research vessels you already used.
 - **Galaxy map**: marks systems (also as a numbered warp route), adds markers you keep.
 - **Micro jump**: short jumps of the ship you fly, paid with Refined Pentaxid from the ship's pentaxid tank.
 - **Ship control**: switches main power, the shield, signals (control panel and switches) and named devices or device

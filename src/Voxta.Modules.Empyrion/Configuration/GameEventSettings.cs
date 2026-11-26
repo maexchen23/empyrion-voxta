@@ -39,7 +39,9 @@ public static class GameEventSettings
         new("factory_mission_done", "Factory mission handed in", On),
         new("trader_mission_done", "Trader mission handed in", Off),
         new("pursued_mission_done", "Pursued mission done", On),
+        new("pursued_items_ready", "Pursued mission: all items in reach", On),
         new("new_mining_contract", "New mining contract", Silent),
+        new("mining_site_job", "Job broadcast at a mining site (on arrival)", On),
         new("mining_contract_done", "Mining contract handed in", Silent),
         new("blueprint_ready", "Factory blueprint ready", On),
     ];

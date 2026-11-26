@@ -155,6 +155,19 @@ public class TraderIndexTests(ITestOutputHelper output)
         Assert.Null(idx.AddPrefab("NoTraders", Prefab("G", "Nothing here", "SecurityGuard")));
     }
 
+    [Fact]
+    public void Prefabs_using_a_watched_dialogue()
+    {
+        var idx = Index();
+        idx.WatchDialogues = ["Refinery_Init", "Offer_Init"];
+        // the dialogue name sits in the zipped block data, like an NPC spawner's dialogue property
+        idx.AddPrefab("Refinery", Prefab("G", "Orbital Refinery", "SecurityGuard", "Refinery_Init"));
+        idx.AddPrefab("Lookalike", Prefab("G", "Other", "Refinery_Init_Old", "XRefinery_Init"));
+        idx.AddPrefab("Plain", Prefab("G", "Nothing here", "SecurityGuard"));
+        Assert.Equal(["Refinery"], idx.PrefabsWithWatchedDialogues);
+        Assert.Equal(["Refinery_Init"], idx.Facts("Refinery")!.WatchedDialogues);
+    }
+
     /// <summary>Layout from the dev/prod game.dat: count, then [uint16 standing][int32 player faction][0][npc id].</summary>
     static byte[] GameDat(params (int standing, int pf, int npc)[] rows)
     {

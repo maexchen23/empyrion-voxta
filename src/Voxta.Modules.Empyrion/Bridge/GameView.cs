@@ -320,11 +320,12 @@ public sealed class GameView
 
         if (!(found.TryGetProperty("ok", out var fok) && fok.ValueKind == JsonValueKind.True))
             return Str(found, "error") ?? "Unknown error.";
+        if (Bool(r, "advise") == true) return ContractAdvice(r, contracts, Array(found, "ores").ToList()) + RefineryCooldowns(r);
         var byToken = contracts.Where(c => Long(c, "token") is not null).GroupBy(c => Long(c, "token")!.Value).ToDictionary(g => g.Key, g => g.First());
         var tokens = Array(found, "tokens").Where(t => Long(t, "token") is long id && byToken.ContainsKey(id)).GroupBy(t => Long(t, "token")!.Value).ToList();
         if (tokens.Count == 0)
             return "The player has no mining contract, neither in the inventory nor in a container in reach. " +
-                   "A Polaris Orbital Refinery hands them out (one every 2 hours per refinery).";
+                   "A Polaris Orbital Refinery hands them out (one every 2 hours per refinery)." + RefineryCooldowns(r);
         var ores = Array(found, "ores").ToList();
         var o = new StringBuilder("The player's mining contracts:");
         foreach (var g in tokens)
@@ -347,7 +348,196 @@ public sealed class GameView
             }
             o.Append($" pays {Pay(c)}.");
         }
-        o.Append("\nTo hand in: the contract in the player's inventory, the ore into the refinery's quest container, then talk to the refinery.");
+        o.Append("\nTo hand in: the contract in the player's inventory, the ore into the quest container there, then talk to the NPC " +
+                 "(no cooldown for handing in).");
+        var handIn = Array(r, "handIn").Take(3).Select(h => (Str(h, "where") ?? "?") + (Double(h, "ly") is double ly ? $", {Ly(ly)}" : "")).ToList();
+        if (handIn.Count > 0) o.Append($"\nNearest hand-in points the player found: {string.Join("; ", handIn)}.");
+        else if (r.TryGetProperty("handIn", out _))
+            o.Append("\nNo hand-in point found yet: Polaris Orbital Refineries and the orbital distribution centers take contracts.");
+        return o + RefineryCooldowns(r);
+    }
+
+    /// <summary>Refineries farther than this are left out of the cooldown answers.</summary>
+    public const double RefineryMaxLy = 100;
+    /// <summary>A refinery whose next contract comes within this time counts as ready.</summary>
+    public const long ReadySoonS = 600;
+
+    /// <summary>Cooldowns for the mining contract answers: the "offers" rows.</summary>
+    public static string RefineryCooldowns(JsonElement r) =>
+        Long(r, "gameTimeS") is long now ? RefineryLines(Array(r, "offers").ToList(), now) : "";
+
+    /// <summary>
+    /// The refineries that gave the player a contract and when each offers the next one (the stored value is the next
+    /// allowed game time; game time stands still while the server is down). Only refineries within 100 LY; the nearest
+    /// one that is ready or ready within 10 minutes is named first. Empty when there is nothing to say.
+    /// </summary>
+    public static string RefineryLines(List<JsonElement> rows, long now, bool gameTimeNote = true)
+    {
+        var all = rows.Where(o => Long(o, "value") is not null).ToList();
+        if (all.Count == 0) return "";
+        var near = all.Where(o => Double(o, "ly") is not double ly || ly <= RefineryMaxLy).ToList();
+        string Where(JsonElement o) => (Str(o, "where") ?? "an Orbital Refinery") + (Double(o, "ly") is double ly ? $", {Ly(ly)}" : "");
+        long Left(JsonElement o) => Long(o, "value")!.Value - now;
+        var sb = new StringBuilder($"\nRefinery contract cooldowns within {RefineryMaxLy:0} LY{(gameTimeNote ? " (game time; it stops while the server is down)" : "")}:");
+        if (near.Count == 0)
+        {
+            sb.Append($" none; the {all.Count} known refinery{(all.Count == 1 ? " is" : "s are")} farther away.");
+            return sb.ToString();
+        }
+        var soon = near.Where(o => Left(o) <= ReadySoonS).OrderBy(o => Double(o, "ly") ?? double.MaxValue).ThenBy(Left).ToList();
+        if (soon.Count > 0)
+        {
+            var best = soon[0];
+            sb.Append($"\n- Nearest ready: {Where(best)}{(Left(best) > 0 ? $" (in {Duration(Left(best))})" : "")}.");
+            if (soon.Count > 1)
+                sb.Append($"\n- Also ready: {string.Join("; ", soon.Skip(1).Take(4).Select(Where))}{(soon.Count > 5 ? $" and {soon.Count - 5} more" : "")}.");
+        }
+        else sb.Append("\n- None ready within 10 minutes.");
+        foreach (var o in near.Where(o => Left(o) > ReadySoonS).OrderBy(Left).Take(4))
+            sb.Append($"\n- {Where(o)}: next contract in {Duration(Left(o))}.");
+        if (all.Count > near.Count) sb.Append($"\n({all.Count - near.Count} known refinery{(all.Count - near.Count == 1 ? "" : "s")} farther than {RefineryMaxLy:0} LY left out.)");
+        return sb.ToString();
+    }
+
+    private static string Ly(double ly) => ly < 0.05 ? "this system" : $"{ly.ToString("0.#", CultureInfo.InvariantCulture)} LY";
+
+    /// <summary>Answer of POST /cooldowns: refinery contracts and repeatable PDA missions with a waiting time.</summary>
+    public static string CooldownsResult(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True))
+            return Str(r, "error") ?? "Unknown error.";
+        if (Long(r, "gameTimeS") is not long now) return "The server's game time is unknown, so no cooldowns can be worked out.";
+        var sb = new StringBuilder("Cooldowns (game time; it stops while the server is down):");
+        var refineries = RefineryLines(Array(r, "refineries").ToList(), now, gameTimeNote: false);
+        sb.Append(refineries.Length > 0 ? refineries : "\nRefinery contracts: no refinery has given the player a contract yet, so every refinery is ready.");
+        var missions = Array(r, "missions").ToList();
+        if (missions.Count == 0)
+            sb.Append("\nRepeatable missions with a waiting time (e.g. UCH research for unlock points): none recorded for the player yet; " +
+                      "the bridge notes each run when it is completed.");
+        foreach (var m in missions)
+        {
+            var title = Str(m, "title") ?? "PDA mission";
+            sb.Append($"\n{title} (repeatable every {Duration(Long(m, "delayS") ?? 0)}):");
+            if (Long(m, "readyAt") is long at)
+                sb.Append(at > now ? $" next run in {Duration(at - now)}." : " ready now.");
+            else sb.Append(" last run not recorded (the bridge only sees completions from now on).");
+            var used = Array(m, "perPoi").Where(x => Long(x, "value") == 1).ToList();
+            if (used.Count > 0)
+                sb.Append($" Each place takes it once; already done at: {string.Join("; ", used.OrderBy(x => Double(x, "ly") ?? double.MaxValue).Take(6).Select(x => (Str(x, "where") ?? "?") + (Double(x, "ly") is double ly ? $", {Ly(ly)}" : "")))}{(used.Count > 6 ? $" and {used.Count - 6} more" : "")}.");
+        }
+        return sb.ToString();
+    }
+
+    private static string Duration(long seconds)
+    {
+        if (seconds < 60) return "less than a minute";
+        var h = seconds / 3600;
+        var m = (seconds % 3600 + 59) / 60;
+        if (m == 60) { h++; m = 0; }
+        return h > 0 ? (m > 0 ? $"{h} h {m} min" : $"{h} h") : $"{m} min";
+    }
+
+    /// <summary>
+    /// Answer of POST /site-cargo as one line: the harvest controllers' free space vs. the job's load; a warning when less
+    /// than 125 % of the load fits (ore is bulky), null when unknown.
+    /// </summary>
+    public static string? SiteCargoLine(JsonElement r)
+    {
+        if (!(r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)) return null;
+        if (!r.TryGetProperty("space", out var s) || !(s.TryGetProperty("ok", out var sok) && sok.ValueKind == JsonValueKind.True)) return null;
+        var need = Double(r, "needL") ?? 0;
+        if (need <= 0) return null;
+        // container volume the way players say it: "320k" (the game shows litres, 320,000)
+        string M3(double l) => l >= 1000 ? $"{(l / 1000).ToString(l < 10000 ? "0.#" : "N0", CultureInfo.InvariantCulture)}k" : $"{l.ToString("0", CultureInfo.InvariantCulture)}";
+        var ship = Str(s, "structure") ?? "the ship";
+        if ((Long(s, "harvestControllers") ?? 0) == 0)
+            return $"The load takes about {M3(need)} of cargo volume; '{ship}' has no harvest controller, so it would all go by hand or another ship.";
+        var free = Double(s, "freeL") ?? 0;
+        return free < need * 1.25
+            ? $"Cargo warning: the load takes about {M3(need)} of cargo volume, but the harvest controllers on '{ship}' have only {M3(free)} free; suggest emptying them first or bringing a bigger hold."
+            : $"The load takes about {M3(need)} of cargo volume; the harvest controllers on '{ship}' have {M3(free)} free, enough.";
+    }
+
+    /// <summary>Contract standing tiers end here (game code: Friendly ≤ 24000 &lt; Honored).</summary>
+    private const int HonoredFrom = 24001;
+
+    /// <summary>
+    /// "Which contract should I choose?": the refinery draws one contract from the chosen faction's pool (pick weights from
+    /// the bridge). Reputation: the two factions closest to Honored, not yet Honored. Cash: a safe bet (every contract of a
+    /// faction has at least 120 % of each ore in reach), then the two best scored factions. Score: per contract the share
+    /// of each ore on board (capped at 100 %), multiplied over its ores, averaged over the faction's list by pick weight;
+    /// ties by the chance to hand in right away, then by pay. Without the faction choice (not Honored with the offer
+    /// faction) it says so: take what is offered.
+    /// </summary>
+    public static string ContractAdvice(JsonElement r, List<JsonElement> contracts, List<JsonElement> ores)
+    {
+        string N(long v) => v.ToString("N0", CultureInfo.InvariantCulture);
+        string Pct(double v) => $"{Math.Round(v * 100, MidpointRounding.AwayFromZero):0}%";
+        var offer = r.TryGetProperty("offer", out var of) && of.ValueKind == JsonValueKind.Object ? of : default;
+        if (offer.ValueKind == JsonValueKind.Object && Bool(offer, "canChoose") == false)
+            return $"The player can't choose the contract's faction yet: that needs {Str(offer, "choiceTier") ?? "Honored"} with " +
+                   $"{Str(offer, "faction")} (now {Str(offer, "tier")}, {N(Long(offer, "standing") ?? 0)}). The refinery picks one at random, " +
+                   "so recommend just taking whatever it offers; every contract also raises the standing with its faction.";
+
+        var have = ores.GroupBy(o => Str(o, "item") ?? "", StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Sum(o => Long(o, "count") ?? 0), StringComparer.OrdinalIgnoreCase);
+        long Have(JsonElement want) => have.TryGetValue(Str(want, "item") ?? "", out var v) ? v : 0;
+        double Weight(JsonElement c) => Double(c, "weight") is double w and > 0 ? w : 1;
+
+        var factions = contracts.GroupBy(c => Str(c, "faction") ?? "?").Select(g =>
+        {
+            var list = g.ToList();
+            var total = list.Sum(Weight);
+            bool Covered(JsonElement c, double factor) => Array(c, "ores").All(w => Have(w) >= (Long(w, "count") ?? 0) * factor);
+            // share of the contract's ore on board, capped at 100 % per ore and multiplied over its ores
+            double Coverage(JsonElement c) => Array(c, "ores").Select(w => Long(w, "count") is long n and > 0 ? Math.Min(1.0, Have(w) / (double)n) : 1.0)
+                .Aggregate(1.0, (a, b) => a * b);
+            return new
+            {
+                Faction = g.Key,
+                Contracts = list,
+                Ready = list.Where(c => Covered(c, 1)).Sum(Weight) / total,
+                Safe = list.All(c => Covered(c, 1.2)),
+                Coverage = list.Sum(c => Weight(c) * Coverage(c)) / total,
+                Pay = list.Sum(c => Weight(c) * (Long(c, "credits") ?? 0)) / total,
+                ReadyNames = list.Where(c => Covered(c, 1)).Select(c => string.Join(" + ", Array(c, "ores").Select(w => Str(w, "name")))).ToList(),
+            };
+        }).ToList();
+
+        var o = new StringBuilder("Which mining contract to pick at the refinery (one is drawn at random from the chosen faction's list):");
+
+        // reputation: not Honored yet, closest to it first
+        var standings = Array(r, "standings").Where(s => Long(s, "standing") is not null).ToList();
+        var climb = standings.Where(s => Long(s, "standing") < HonoredFrom).OrderByDescending(s => Long(s, "standing")).Take(2).ToList();
+        o.Append("\nFor reputation (Honored gives better trade prices; prefer factions close to it):");
+        if (standings.Count == 0) o.Append(" standings unknown.");
+        else if (climb.Count == 0) o.Append(" already Honored with every contract faction.");
+        foreach (var s in climb)
+        {
+            var rep = contracts.Where(c => Str(c, "faction") == Str(s, "faction")).Select(c => Long(c, "reputation") ?? 0).DefaultIfEmpty(0).Max();
+            var left = HonoredFrom - Long(s, "standing")!.Value;
+            o.Append($"\n- {Str(s, "faction")}: {Str(s, "tier")} ({N(Long(s, "standing")!.Value)})");
+            if (rep > 0) o.Append($", about {N((left + rep - 1) / rep)} contracts to Honored");
+            o.Append('.');
+        }
+        var honored = standings.Where(s => Long(s, "standing") >= HonoredFrom).Select(s => Str(s, "faction")).ToList();
+        if (honored.Count > 0) o.Append($"\n(Already Honored: {string.Join(", ", honored)}.)");
+
+        // cash: the safe bet, then the best chance to hand the drawn contract in right away
+        o.Append("\nFor quick cash, from the ore on board and in reach:");
+        var safe = factions.Where(f => f.Safe).OrderByDescending(f => f.Pay).ToList();
+        foreach (var f in safe.Take(1))
+            o.Append($"\n- Safe bet: {f.Faction}: every one of its contracts is covered with 20% to spare; pays {N((long)f.Pay)} credits on average.");
+        var cash = factions.Where(f => !safe.Take(1).Contains(f) && f.Coverage > 0)
+            .OrderByDescending(f => f.Coverage).ThenByDescending(f => f.Ready).ThenByDescending(f => f.Pay).Take(2).ToList();
+        foreach (var f in cash)
+        {
+            o.Append($"\n- {f.Faction}: on average {Pct(f.Coverage)} of the drawn contract's ore is on board; " +
+                     $"{Pct(f.Ready)} chance it can be handed in right away");
+            if (f.ReadyNames.Count > 0) o.Append($" (covered: {string.Join(", ", f.ReadyNames.Take(4))})");
+            o.Append($"; pays {N((long)f.Pay)} credits on average.");
+        }
+        if (safe.Count == 0 && cash.Count == 0) o.Append(" none of the contract ores is in reach, so no quick cash; pick for reputation.");
         return o.ToString();
     }
 
@@ -1210,6 +1400,12 @@ public sealed class GameView
                 ? myOffers.EnumerateArray().Select(o => new ContractOffer(Str(o, "key") ?? "", Long(o, "value") ?? 0, Str(o, "where"))).ToList()
                 : null,
             Credits = a is { } cr ? Long(cr, "credits") : null,
+            SiteJobs = SteamId != null && _root.TryGetProperty("siteJobs", out var sj) && sj.ValueKind == JsonValueKind.Object &&
+                       sj.TryGetProperty(SteamId, out var mySites) && mySites.ValueKind == JsonValueKind.Array
+                ? mySites.EnumerateArray().Select(x => new SiteJob(Str(x, "key") ?? "", Str(x, "where") ?? "a POI",
+                    Array(x, "needs").Select(n => (Str(n, "item") ?? "", Str(n, "name") ?? Str(n, "item") ?? "?", Long(n, "count") ?? 0)).ToList(),
+                    Str(x, "container") ?? "quest", Long(x, "credits") ?? 0, Bool(x, "choice") == true, Str(x, "rep"), Bool(x, "done") == true)).ToList()
+                : null,
             FactoryBlueprint = a is { } f1 && f1.TryGetProperty("factory", out var fac) ? Str(fac, "blueprint") : null,
             FactoryRemainingS = a is { } f2 && f2.TryGetProperty("factory", out var fac2) ? Get(fac2, "remainingS") : null,
         };

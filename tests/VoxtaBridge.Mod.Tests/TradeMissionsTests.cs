@@ -145,6 +145,58 @@ public class TradeMissionsTests(ITestOutputHelper output)
         Assert.Equal(5, solaris.Missions.Count);
         Assert.Equal(50, solaris.Missions[5].Needs[0].Count);
         Assert.Equal(50000, t.ByName("TD_IndustrialSmallPolaris")!.WorkOrderPrice);
+        var foreman = t.ByName("Eden_PolarisForeman")!;
+        Assert.Equal(("Eden_Mission", "Eden_Quantity", "Eden_Complete", true), (foreman.MissionVar, foreman.QuantityVar, foreman.DoneVar, foreman.TradeGated));
+        Assert.Equal("EnergyCellLarge", foreman.Missions[1].Needs[0].Item);
+        Assert.Equal(4, foreman.Missions.Count);
+        output.WriteLine("quantity families: " + string.Join(", ", t.Families.Where(f => f.QuantityVar != null).Select(f => f.Name)));
+    }
+
+    // shaped like RE2's Mining Foreman (cut down)
+    const string Foreman = """
+        { +Dialogue Name: Eden_PolarisForeman_Init
+          Next_1: Eden_PolarisForeman_Setup
+          NextIf_1: "Eden_Mission == 0"
+          Next_2: Eden_PolarisForeman_Greet
+          Variable_1: "Eden_Complete", param1: dbplayerpoipos_int
+          Variable_2: "Eden_Mission", param1: dbplayerpoipos_int
+          Variable_3: "Eden_Quantity", param1: dbplayerpoipos_int
+          Variable_4: "Type", param1: string
+          Execute: "if (Eden_Mission == 1) Type = 'EnergyCellLarge'; if (Eden_Mission == 2) Type = 'MiningEquipment';"
+          NPCName: eden_dialogue_foreman
+        }
+        { +Dialogue Name: Eden_PolarisForeman_Greet2
+          OptionIf_1: "Eden_Complete == 1"
+          OptionExecute_1: "OpenTraderWindow()"
+        }
+        { +Dialogue Name: Eden_PolarisForeman_Help
+          OptionIf_1: "HasItem(Type, Eden_Quantity)"
+          OptionNext_1: Eden_PolarisForeman_Complete
+          Execute: "Eden_Complete = 2"
+        }
+        { +Dialogue Name: Eden_PolarisForeman_Complete
+          Execute: "Eden_Complete = 1; RemoveItem(Type, Eden_Quantity); Player.Credit += Eden_RewardCredit"
+        }
+        """;
+
+    [Fact]
+    public void Foreman_one_rolled_mission_then_trades()
+    {
+        var t = new TradeMissions();
+        t.LoadDialogues(new StringReader(Foreman));
+        var f = t.ByStart("Eden_PolarisForeman_Init")!;
+        Assert.True(f.TradeGated);
+        // rolled: mission 2 (Mining Equipment), amount 5, asked for help (2)
+        var open = TradeMissions.State(f, new Dictionary<string, int> { ["Eden_Mission"] = 2, ["Eden_Quantity"] = 5, ["Eden_Complete"] = 2 });
+        Assert.Equal("open", open.Status);
+        Assert.Equal(("MiningEquipment", 5), (open.Mission.Needs[0].Item, open.Mission.Needs[0].Count));
+        Assert.Equal(0, open.CanTrade);
+        // done: trades
+        var done = TradeMissions.State(f, new Dictionary<string, int> { ["Eden_Mission"] = 2, ["Eden_Quantity"] = 5, ["Eden_Complete"] = 1 });
+        Assert.Equal("unlocked", done.Status);
+        Assert.True(done.CanTrade > 0);
+        // a TD family with the same mission variable name doesn't get in the way: the prefab decides
+        Assert.Same(f, t.Resolve(["Eden_PolarisForeman_Init"], new Dictionary<string, int> { ["Eden_Mission"] = 1 }));
     }
 
     [Fact]

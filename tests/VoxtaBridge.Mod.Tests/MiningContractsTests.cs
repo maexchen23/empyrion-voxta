@@ -105,6 +105,74 @@ public class MiningContractsTests
     }
 
     [Fact]
+    public void Loot_group_weights_and_faction_keys()
+    {
+        var m = Load();
+        var loot = "{ +LootGroup Name: Eden_MiningContractsZir\n  Count: \"1\"\n" +
+                   "  Item_0: Token, param1: \"meta=6860\", param2: 0.5 # Magnesium\n" +
+                   "  Item_1: Token, param1: \"meta=6866\", param2: 0.25 # rare\n" +
+                   "  Item_2: Token, param1: \"meta=4002\", param2: 1\n}\n";
+        Assert.Equal(2, m.LoadLootGroups(new StringReader(loot)));
+        Assert.Equal(0.5, m.ByToken(6860)!.Weight);
+        Assert.Equal(0.25, m.ByToken(6866)!.Weight);
+        Assert.Equal(0, m.ByToken(6821)!.Weight); // not in any group: unknown
+        var zir = m.ByToken(6860)!;
+        Assert.Equal("Zirax", zir.Branch);
+        Assert.Contains("Zirax", MiningContracts.FactionKeys(zir));
+        Assert.Contains("Polaris", MiningContracts.FactionKeys(m.ByToken(6821)!));
+    }
+
+    [Fact]
+    public void Dialogues_leading_to_the_offer()
+    {
+        var m = new MiningContracts();
+        m.LoadDialogues(new StringReader(Ecf + """
+
+            { +Dialogue Name: Refinery_Init
+              Next_1: Refinery_Greet
+            }
+            { +Dialogue Name: Refinery_Greet
+              OptionNext_1: Eden_ContractMiningOffer_Init, param1: GotoAndReset
+              OptionNext_2: End
+            }
+            { +Dialogue Name: Unrelated_Init
+              Next_1: Unrelated_Greet
+            }
+            """));
+        Assert.Contains("Eden_ContractMiningOffer_Init", m.OfferEntryDialogues);
+        Assert.Contains("Refinery_Greet", m.OfferEntryDialogues);
+        Assert.Contains("Refinery_Init", m.OfferEntryDialogues);
+        Assert.DoesNotContain("Unrelated_Init", m.OfferEntryDialogues);
+    }
+
+    [Fact]
+    public void Hand_in_dialogues_with_a_per_poi_gate()
+    {
+        var m = new MiningContracts();
+        m.LoadDialogues(new StringReader(Ecf + """
+
+            { +Dialogue Name: Eden_ContractMining_Init
+              Next_1: End
+            }
+            { +Dialogue Name: Station_Greet
+              OptionNext_1: Eden_ContractMining_Init, param1: GotoAndReset
+            }
+            { +Dialogue Name: Vessel_Init
+              Variable_1: "Done", param1: dbplayerpoi_int
+              Next_1: Vessel_Deny
+              NextIf_1: "Done == 1"
+              Next_2: Vessel_Greet
+            }
+            { +Dialogue Name: Vessel_Deny
+              OptionNext_1: Eden_ContractMining_Init, param1: GotoAndReset
+            }
+            """));
+        Assert.Null(m.HandInEntryDialogues["Station_Greet"]);
+        Assert.Null(m.HandInEntryDialogues["Vessel_Deny"]);
+        Assert.Equal("Done", m.HandInEntryDialogues["Vessel_Init"]); // only after the vessel's own quest
+    }
+
+    [Fact]
     public void Offer_rules()
     {
         var m = Load();

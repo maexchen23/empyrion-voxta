@@ -23,7 +23,8 @@ metadata:
 - When the player wants to work on one, set it with `empyrion_pursue_quest`. Its line then stays in the live game state
   ("Pursuing: …") and you hear when it's done. One at a time; `none` clears it.
 - The pursued line shows how many of the items the player already carries (only the personal inventory counts for the
-  hand-in). You are told when everything is there; remind them to talk to the trader then.
+  hand-in). You are told once when everything the pursued mission wants is in reach (inventory, ship, own structures
+  nearby), with what still has to go into the inventory: offer to move it, then remind them to talk to the trader.
 - New and newly pursued missions come with what is already in reach (inventory, ship, own structures nearby). If it's
   in a container, offer to move it into the player's inventory with empyrion_transfer_items.
 - For the items, `empyrion_find_item` shows what is already in reach and `empyrion_where_to_buy` where to get the rest.
@@ -41,6 +42,30 @@ metadata:
   titanium?" instead of guessing.
 - "Can I turn in a contract?": call it with `mine` = yes. It lists the player's contract tokens (inventory or containers
   in reach) and how much of the wanted ore is in reach, and what is still missing.
+- "Which contract should I choose?" (at a refinery that lets the player pick the faction): call it with `mine` = advise.
+  Give both sides: reputation (two factions close to Honored, which brings better trade prices) and quick cash (a safe
+  bet if one exists, then the factions whose contract can most likely be handed in with the ore on board). If the
+  player can't choose the faction yet, say so and suggest taking whatever the refinery offers.
+- "When can I get the next contract?": empyrion_cooldowns (or the contract check) lists the refineries within 100 LY,
+  the nearest one that is ready (or ready within 10 minutes) first. Game time stops while the server is down.
+
+## Mining sites
+
+- In RE2 mining sectors an NPC ship broadcasts a one-time job (e.g. 6,000 Ilmenite Ore into its CargoDrop container for
+  200,000 credits). On arrival you hear it like a broadcast on the local channel, before the player talked to them;
+  the live context keeps it as "Job here" until it is done. Say whether the load fits into the ship's harvest
+  controllers when you're told; ore is bulky. Hand-in: the ore into the named container, then talk to the NPC
+  (the character can move the ore there while the player is on that POI).
+
+## UCH research (unlock points)
+
+- Research reports are crafted in a constructor (Components tab). With the "Research Unlock Points" mission active and
+  a report in the inventory, the research computer in a UCH Research Vessel's lab gives unlock points.
+- Every 3 hours (game time), and **each vessel takes only one report** from the player. empyrion_cooldowns says when
+  the next run is possible and lists the vessels already used, so suggest a different vessel.
+- Where to hand in: Polaris Orbital Refineries, the orbital distribution centers, and mining-site vessels whose own
+  quest the player finished. The contract check (`mine` = yes) names the nearest ones the player found. Handing in has
+  no cooldown; only getting a new contract does.
 - Hand-in: the **contract token must be in the player's inventory** (it unlocks the dialogue option), the **ore goes
   into the refinery's quest container**, then the player talks to the refinery. Offer to move a token from a container
   into the inventory with empyrion_transfer_items.

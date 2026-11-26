@@ -66,6 +66,32 @@ public class RealFilesTests(ITestOutputHelper output)
         Assert.Equal(("Zirax Empire", 8000, 800000), (mag.Faction, mag.Ores[0].Count, mag.Credits));
         Assert.Equal(7200, m.CooldownSeconds);
         Assert.Equal("HonoredMin", m.ChoiceFromTier);
+        var loot = Path.Combine(scenario!, "Content", "Configuration", "LootGroups.ecf");
+        if (File.Exists(loot))
+        {
+            using (var r = new StreamReader(loot)) output.WriteLine($"weights: {m.LoadLootGroups(r)}");
+            Assert.Equal(0.25, m.ByToken(6864)!.Weight); // Magmacite, rare
+            Assert.Equal(0.5, m.ByToken(6860)!.Weight);
+            Assert.Contains(m.All, c => c.Branch == "Colonist" && MiningContracts.FactionKeys(c).Contains("Colonists"));
+        }
+        output.WriteLine("offer entry dialogues: " + string.Join(", ", m.OfferEntryDialogues.OrderBy(x => x)));
+        Assert.Contains("Eden_PolRefinery_Init", m.OfferEntryDialogues);
+        output.WriteLine("hand-in entry dialogues: " + string.Join(", ", m.HandInEntryDialogues.OrderBy(x => x.Key).Select(x => x.Key + (x.Value != null ? $" [{x.Value}]" : ""))));
+        Assert.Null(m.HandInEntryDialogues["Eden_PolRefinery_Init"]);
+        Assert.Equal("Eden_Complete", m.HandInEntryDialogues["Eden_PolMinerMissionT2_Init"]);
+        var pdaYaml = Path.Combine(scenario!, "Extras", "PDA", "PDA.yaml");
+        if (File.Exists(pdaYaml))
+        {
+            var reps = new PdaRepeats();
+            using (var r = new StreamReader(pdaYaml)) reps.LoadPda(r);
+            using (var r = new StreamReader(Path.Combine(scenario!, "Extras", "PDA", "PDA.csv"))) reps.LoadTitles(r);
+            using (var r = new StreamReader(dlg)) reps.LinkDialogues(r);
+            foreach (var x in reps.All) output.WriteLine($"pda repeat {x.Chapter} '{x.Title}' {x.DelaySeconds} s, once per POI: {x.OncePerPoiVar}");
+            var research = reps.Get("eden_pda_UuuGC")!;
+            Assert.Equal(180 * 60, research.DelaySeconds);
+            Assert.Equal("Research Unlock Points", research.Title);
+            Assert.Equal("Eden_ResearchUPComplete", research.OncePerPoiVar);
+        }
         using (var r = new StreamReader(dlg))
         {
             var drops = MiningContracts.DropContainerNames(r);

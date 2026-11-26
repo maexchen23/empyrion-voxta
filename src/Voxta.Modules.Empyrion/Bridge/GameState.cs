@@ -11,6 +11,16 @@ public sealed record OpenMission(string Key, string Kind, string Line, string? W
     IReadOnlyList<MissionNeed>? Needs = null);
 
 /// <summary>A ship or base that just came into being: kind "blueprint" (spawned from one) or "starter" (starter block placed).</summary>
+/// <summary>A delivery job of a POI on the player's playfield (e.g. a mining site wants 6,000 Ilmenite Ore in its CargoDrop).</summary>
+public sealed record SiteJob(string Key, string Where, IReadOnlyList<(string Item, string Name, long Count)> Needs, string Container,
+    long Credits, bool Choice, string? Rep, bool Done)
+{
+    public string NeedsText => string.Join(" + ", Needs.Select(n => $"{n.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} {n.Name}"));
+    public string RewardText => Credits > 0
+        ? $"{Credits.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} credits{(Choice ? " or another reward of the player's choice" : "")}"
+        : Choice ? "a reward of the player's choice" : "a reward";
+}
+
 /// <summary>A mining contract token in the player's inventory: token id, name, faction, what it wants, the pay, how many.</summary>
 public sealed record HeldContract(long Token, string Name, string Faction, string Wants, long Credits, long Reputation, int Count);
 
@@ -92,6 +102,8 @@ public sealed record GameState
     /// <summary>The player's refinery contract offers (null = not known this poll).</summary>
     public IReadOnlyList<ContractOffer>? ContractOffers { get; init; }
     public long? Credits { get; init; }
+    /// <summary>Delivery jobs of the POIs on the player's playfield (null = not known this poll).</summary>
+    public IReadOnlyList<SiteJob>? SiteJobs { get; init; }
 
     public string? FactoryBlueprint { get; init; }
     public double? FactoryRemainingS { get; init; }
@@ -164,6 +176,10 @@ public sealed record GameState
                     : "";
             sb.AppendLine(PursuingStatus is "done" or "gone" ? $"Pursued mission: {PursuingLine}." : $"Pursuing: {PursuingLine}{progress}.");
         }
+
+        foreach (var job in SiteJobs?.Where(j => !j.Done).Take(2) ?? [])
+            sb.AppendLine($"Job here: {job.Where} wants {job.NeedsText} in its '{job.Container}' container for {job.RewardText}" +
+                          $"{(job.Rep != null ? $" (needs {job.Rep} standing)" : "")}; one time per player.");
 
         if (FactoryBlueprint != null)
             sb.AppendLine(FactoryRemainingS is > 0

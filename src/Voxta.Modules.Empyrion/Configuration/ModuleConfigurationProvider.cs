@@ -38,6 +38,7 @@ public class ModuleConfigurationProvider : ModuleConfigurationProviderBase, IMod
         new(EmpyrionConstants.ListQuestsTool, "List Trader Missions"),
         new(EmpyrionConstants.PursueQuestTool, "Pursue A Trader Mission"),
         new(EmpyrionConstants.MiningContractsTool, "Mining Contracts"),
+        new(EmpyrionConstants.CooldownsTool, "Cooldowns (refineries, research)"),
         new(EmpyrionConstants.SendToChatTool, "Write To The Game Chat"),
         new(EmpyrionConstants.MarkStarsTool, "Mark Stars On The Galaxy Map"),
         new(EmpyrionConstants.ClearMarksTool, "Clear Galaxy Map Marks"),

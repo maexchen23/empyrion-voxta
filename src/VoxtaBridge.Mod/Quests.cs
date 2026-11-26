@@ -25,7 +25,7 @@ namespace VoxtaBridge
             var tm = tradeMissions;
             var facts = traderIndex?.Facts(prefab);
             if (tm == null || facts == null) return null;
-            return facts.TradeDialogues.Select(tm.ByStart).FirstOrDefault(f => f != null && f.TradeGated);
+            return MissionStarts(facts).Select(tm.ByStart).FirstOrDefault(f => f != null && f.TradeGated);
         }
 
         /// <summary>
@@ -42,6 +42,10 @@ namespace VoxtaBridge
                 return $"unlock mission: {NeedsText(m)}" + (WorkOrderText(fam) is string wo ? $"; or a work order: {wo}" : "");
             return "the trader gives an unlock mission first" + (WorkOrderText(fam) is string w ? $" (or a work order: {w})" : "");
         }
+
+        /// <summary>The mission start dialogues a prefab uses: the TD_…_Start ones and the watched others (e.g. a foreman).</summary>
+        static IEnumerable<string> MissionStarts(PoiFacts facts) =>
+            facts == null ? null : facts.TradeDialogues.Concat(facts.WatchedDialogues);
 
         sealed class QuestRow
         {
@@ -100,7 +104,7 @@ namespace VoxtaBridge
             foreach (var row in rows.Values)
             {
                 if (tm == null || row.Name == null) continue;
-                row.Family = tm.Resolve(idx?.Facts(row.Prefab)?.TradeDialogues, row.Vars);
+                row.Family = tm.Resolve(MissionStarts(idx?.Facts(row.Prefab)), row.Vars);
                 if (row.Family == null) continue;
                 row.Mission = TradeMissions.State(row.Family, row.Vars);
                 list.Add(row);
@@ -344,36 +348,94 @@ namespace VoxtaBridge
         /// </summary>
         /// <summary>
         /// The player's mining contract offers: one row per refinery that gave them a contract (the cooldown variable, its
-        /// value changes with every contract given): [{key, value, where}].
+        /// value changes with every contract given): [{key, value, where, ly}].
         /// </summary>
-        static string ReadContractOffers(string db, int playerId, string cooldownVar)
+        static string ReadContractOffers(string db, int playerId, string cooldownVar, string playerPlayfield = null, bool withDiscovered = false) =>
+            ReadPoiVarRows(db, playerId, cooldownVar, playerPlayfield, withDiscovered ? contractPrefabs : null);
+
+        /// <summary>
+        /// One per-player-and-POI dialogue variable (state key "&lt;POI id&gt;-…-&lt;playfield&gt;"): [{key, value, where, ly}],
+        /// where = "POI name (playfield)", ly = distance from the player's playfield (galaxy sectors, 100,000 per LY).
+        /// </summary>
+        /// <param name="discoveredPrefabs">
+        /// If set, also the POIs the player discovered that are built from one of these prefabs and have no row yet, with
+        /// value 0 (= ready) and "discovered": true (e.g. refineries that never gave the player a contract).
+        /// </param>
+        static string ReadPoiVarRows(string db, int playerId, string varName, string playerPlayfield, HashSet<string> discoveredPrefabs = null)
         {
             var j = new Json().Arr();
             using (var c = new SqliteConnection($"Data Source={db};Read Only=True;"))
             {
                 c.Open();
+                (double x, double y, double z)? here = null;
+                if (!string.IsNullOrEmpty(playerPlayfield))
+                    using (var q = c.CreateCommand())
+                    {
+                        q.CommandText = "SELECT sectorx, sectory, sectorz FROM Playfields WHERE name = @pf LIMIT 1";
+                        q.Parameters.AddWithValue("@pf", playerPlayfield);
+                        using (var r = q.ExecuteReader())
+                            if (r.Read() && !(r[0] is DBNull)) here = (Convert.ToDouble(r[0]), Convert.ToDouble(r[1]), Convert.ToDouble(r[2]));
+                    }
                 var rows = new List<(string state, long value)>();
                 using (var q = c.CreateCommand())
                 {
-                    q.CommandText = "SELECT state, value FROM DialogueVars WHERE type = 110 AND entityid = @p AND name = @n";
+                    q.CommandText = "SELECT state, value FROM DialogueVars WHERE entityid = @p AND name = @n";
                     q.Parameters.AddWithValue("@p", playerId);
-                    q.Parameters.AddWithValue("@n", cooldownVar);
+                    q.Parameters.AddWithValue("@n", varName);
                     using (var r = q.ExecuteReader())
                         while (r.Read()) rows.Add((r[0] as string ?? "", r[1] is DBNull ? 0 : Convert.ToInt64(r[1])));
                 }
                 foreach (var (state, value) in rows)
                 {
                     string where = null;
+                    double? ly = null;
                     var dash = state.IndexOf('-');
                     if (dash > 0 && long.TryParse(state.Substring(0, dash), out var poi))
                         using (var q = c.CreateCommand())
                         {
-                            q.CommandText = "SELECT e.name, p.name FROM Entities e JOIN Playfields p ON p.pfid = e.pfid WHERE e.entityid = @e";
+                            q.CommandText = "SELECT e.name, p.name, p.sectorx, p.sectory, p.sectorz FROM Entities e JOIN Playfields p ON p.pfid = e.pfid WHERE e.entityid = @e";
                             q.Parameters.AddWithValue("@e", poi);
                             using (var r = q.ExecuteReader())
-                                if (r.Read()) where = $"{r[0] as string} ({r[1] as string})";
+                                if (r.Read())
+                                {
+                                    where = $"{r[0] as string} ({r[1] as string})";
+                                    if (here is var (hx, hy, hz) && !(r[2] is DBNull))
+                                    {
+                                        double dx = Convert.ToDouble(r[2]) - hx, dy = Convert.ToDouble(r[3]) - hy, dz = Convert.ToDouble(r[4]) - hz;
+                                        ly = Math.Round(Math.Sqrt(dx * dx + dy * dy + dz * dz) / 100000.0, 1);
+                                    }
+                                }
                         }
-                    j.Obj().Prop("key", state).Prop("value", value).Prop("where", where).EndObj();
+                    j.Obj().Prop("key", state).Prop("value", value).Prop("where", where);
+                    if (ly.HasValue) j.Prop("ly", ly.Value);
+                    j.EndObj();
+                }
+                if (discoveredPrefabs != null && discoveredPrefabs.Count > 0)
+                {
+                    var known = new HashSet<long>(rows.Select(r => { var d = r.state.IndexOf('-'); return d > 0 && long.TryParse(r.state.Substring(0, d), out var id) ? id : -1; }));
+                    using (var q = c.CreateCommand())
+                    {
+                        q.CommandText =
+                            "SELECT DISTINCT d.poiid, e.name, p.name, p.sectorx, p.sectory, p.sectorz, s.bpname FROM DiscoveredPOIs d " +
+                            "JOIN Structures s ON s.entityid = d.poiid JOIN Entities e ON e.entityid = d.poiid JOIN Playfields p ON p.pfid = e.pfid " +
+                            "WHERE d.entityid = @p AND (e.isremoved IS NULL OR e.isremoved = 0)";
+                        q.Parameters.AddWithValue("@p", playerId);
+                        using (var r = q.ExecuteReader())
+                            while (r.Read())
+                            {
+                                var poi = Convert.ToInt64(r[0]);
+                                if (known.Contains(poi) || !(r[6] is string bp) || !discoveredPrefabs.Contains(bp)) continue;
+                                known.Add(poi);
+                                j.Obj().Prop("key", "poi:" + poi.ToString(CultureInfo.InvariantCulture)).Prop("value", 0L)
+                                    .Prop("where", $"{r[1] as string} ({r[2] as string})").Prop("discovered", true);
+                                if (here is var (hx, hy, hz) && !(r[3] is DBNull))
+                                {
+                                    double dx = Convert.ToDouble(r[3]) - hx, dy = Convert.ToDouble(r[4]) - hy, dz = Convert.ToDouble(r[5]) - hz;
+                                    j.Prop("ly", Math.Round(Math.Sqrt(dx * dx + dy * dy + dz * dz) / 100000.0, 1));
+                                }
+                                j.EndObj();
+                            }
+                    }
                 }
             }
             return j.EndArr().ToString();
@@ -382,7 +444,7 @@ namespace VoxtaBridge
         static void WriteQuestStatus(Json j, IEnumerable<DediPlayer> online)
         {
             var save = SaveGameDir();
-            var rows = new List<(string steamId, string pursuing, string missions, string offers)>();
+            var rows = new List<(string steamId, string pursuing, string missions, string offers, string sites)>();
             foreach (var p in online)
             {
                 if (p.SteamId == null) continue;
@@ -391,7 +453,7 @@ namespace VoxtaBridge
                 lock (pursuedQuests) fresh = pursuedCache.TryGetValue(p.SteamId, out cached) && DateTime.UtcNow - cached.at < TimeSpan.FromSeconds(10);
                 if (!fresh && save != null)
                 {
-                    string pursuing = null, missions, offers = null;
+                    string pursuing = null, missions, offers = null, sites = null;
                     try
                     {
                         var quests = ReadQuests(Path.Combine(save, "global.db"), p.EntityId);
@@ -420,26 +482,31 @@ namespace VoxtaBridge
                             mj.EndObj();
                         }
                         missions = mj.EndArr().ToString();
-                        if (miningContracts?.CooldownVar is string cv) offers = ReadContractOffers(Path.Combine(save, "global.db"), p.EntityId, cv);
+                        if (miningContracts?.CooldownVar is string cv) offers = ReadContractOffers(Path.Combine(save, "global.db"), p.EntityId, cv, p.Playfield);
+                        sites = ReadSiteJobs(Path.Combine(save, "global.db"), p.EntityId, p.Playfield);
                     }
                     catch (Exception e)
                     {
                         pursuing = PursuedPoi(p.SteamId) == null ? null : new Json().Obj().Prop("status", "error").Prop("line", "global.db: " + e.Message).EndObj().ToString();
                         missions = null; // unknown: the module keeps its last list, so nothing reads as new
                     }
-                    cached = (DateTime.UtcNow, (pursuing ?? "") + "\u0001" + (missions ?? "") + "\u0001" + (offers ?? ""));
+                    cached = (DateTime.UtcNow, (pursuing ?? "") + "\u0001" + (missions ?? "") + "\u0001" + (offers ?? "") + "\u0001" + (sites ?? ""));
                     lock (pursuedQuests) pursuedCache[p.SteamId] = cached;
                 }
                 if (cached.json == null) continue;
                 var parts = cached.json.Split('\u0001');
                 rows.Add((p.SteamId, parts[0].Length > 0 ? parts[0] : null, parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null,
-                    parts.Length > 2 && parts[2].Length > 0 ? parts[2] : null));
+                    parts.Length > 2 && parts[2].Length > 0 ? parts[2] : null, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null));
             }
             j.Key("pursuing").Obj();
             foreach (var r in rows.Where(r => r.pursuing != null)) j.Key(r.steamId).Raw(r.pursuing);
             j.EndObj();
             j.Key("missions").Obj();
             foreach (var r in rows.Where(r => r.missions != null)) j.Key(r.steamId).Raw(r.missions);
+            j.EndObj();
+            if (GameTimeSeconds() is long gameNow) j.Prop("gameTimeS", gameNow);
+            j.Key("siteJobs").Obj();
+            foreach (var r in rows.Where(r => r.sites != null)) j.Key(r.steamId).Raw(r.sites);
             j.EndObj();
             j.Key("contractOffers").Obj();
             foreach (var r in rows.Where(r => r.offers != null)) j.Key(r.steamId).Raw(r.offers);

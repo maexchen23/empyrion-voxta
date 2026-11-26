@@ -65,6 +65,28 @@ public static class GameEvents
     /// <param name="next">State now; null when the player is offline.</param>
     /// <param name="firstPoll">True for the first poll of a chat: nothing is reported, the context covers it.</param>
     /// <param name="config">Modes and thresholds from the settings; null = defaults.</param>
+    /// <summary>
+    /// "Items ready" for the pursued mission: every wanted item is in reach (inventory, the ship and own structures nearby),
+    /// counted by the caller. Null while something is missing or when the setting is Off. Hand-ins check the player's
+    /// inventory, so the text says what still has to be moved there.
+    /// </summary>
+    public static GameEvent? ItemsReady(string missionLine, IReadOnlyList<(MissionNeed Need, int InInventory, int InReach)> rows,
+        GameEventConfig? config = null)
+    {
+        config ??= GameEventConfig.Default;
+        var mode = config.ModeOf("pursued_items_ready");
+        if (mode == GameEventSettings.Off || rows.Count == 0 || rows.Any(r => r.InReach < r.Need.Count)) return null;
+        static string N(int v) => v.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        var toMove = rows.Where(r => r.InInventory < r.Need.Count).ToList();
+        var text = $"Everything the pursued mission wants is in reach now: {missionLine}.";
+        text += toMove.Count == 0
+            ? " All of it is in the player's inventory: ready to hand in."
+            : " To hand it in, the items must be in the player's inventory; still to move there: " +
+              string.Join(", ", toMove.Select(r => $"{N(r.Need.Count - r.InInventory)} {r.Need.Name}")) +
+              (mode == GameEventSettings.On ? ". Offer to move them (empyrion_transfer_items)." : ".");
+        return new GameEvent("PursuedItemsReady", text, mode == GameEventSettings.On, Id: "pursued_items_ready");
+    }
+
     public static List<GameEvent> Diff(GameState? prev, GameState? next, bool firstPoll = false, GameEventConfig? config = null)
     {
         config ??= GameEventConfig.Default;
@@ -154,6 +176,19 @@ public static class GameEvents
                     Id: factory ? "factory_mission_done" : "trader_mission_done"));
             }
         }
+
+        // Delivery jobs (mining sites): a job the player hasn't done shows up on the playfield they arrived at. Framed as
+        // a broadcast on the local channel, so the character may bring it up before the player talked to the NPC.
+        if (prev.SiteJobs is { } jobsBefore && next.SiteJobs is { } jobsNow)
+            foreach (var job in jobsNow.Where(j => !j.Done && jobsBefore.All(b => b.Key != j.Key)))
+            {
+                var speak = config.ModeOf("mining_site_job") == GameEventSettings.On;
+                events.Add(new("MiningSiteJob",
+                    $"On the local channel, the {job.Where} is broadcasting a job: they want {job.NeedsText} in their '{job.Container}' " +
+                    $"container, for {job.RewardText}{(job.Rep != null ? $" (they only deal with {job.Rep} standing or better)" : "")}." +
+                    (speak ? " Tell the player about it like a broadcast you just picked up." : ""),
+                    speak, "site:" + job.Key, "mining_site_job"));
+            }
 
         // Mining contracts. New: a refinery's offer row for the player changed (it changes with every contract given; moving
         // the token between the inventory and containers doesn't touch it). Handed in: a contract token left the inventory

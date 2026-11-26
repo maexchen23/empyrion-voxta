@@ -235,3 +235,93 @@ public class MiningContractEventTests
         Assert.True(Assert.Single(GameEvents.Diff(S([Cobalt], [Refinery], 0), S([], [Refinery], 960000), config: Cfg(("mining_contract_done", "on")))).Important);
     }
 }
+
+public class SiteJobTests
+{
+    static readonly SiteJob Ilmenite = new("112027", "Industrial Command Vessel (Sector A)", [("Eden_IlmeniteOre", "Ilmenite Ore", 6000)],
+        "CargoDrop", 200000, false, "Polaris Neutral", false);
+
+    static GameState S(string pf, params SiteJob[] jobs) => new() { Player = "Player1", Playfield = pf, SiteJobs = jobs };
+
+    // arriving also gives the usual playfield event; only the job events matter here
+    static List<GameEvent> Jobs(GameState prev, GameState next, GameEventConfig? config = null) =>
+        GameEvents.Diff(prev, next, config: config).Where(e => e.Name == "MiningSiteJob").ToList();
+
+    [Fact]
+    public void Arrival_at_a_site_with_an_open_job_is_spoken_by_default()
+    {
+        var e = Assert.Single(Jobs(S("Elsewhere"), S("Sector A", Ilmenite)));
+        Assert.Equal("MiningSiteJob", e.Name);
+        Assert.True(e.Important);
+        Assert.Equal("site:112027", e.MissionKey);
+        Assert.Contains("On the local channel, the Industrial Command Vessel (Sector A) is broadcasting a job: they want 6,000 Ilmenite Ore in their 'CargoDrop' container, for 200,000 credits (they only deal with Polaris Neutral standing or better).", e.Description);
+    }
+
+    [Fact]
+    public void Done_jobs_staying_and_the_first_poll_are_quiet()
+    {
+        Assert.Empty(Jobs(S("Elsewhere"), S("Sector A", Ilmenite with { Done = true })));
+        Assert.Empty(Jobs(S("Sector A", Ilmenite), S("Sector A", Ilmenite)));
+        Assert.Empty(Jobs(new GameState { Player = "Player1", Playfield = "X" }, S("Sector A", Ilmenite))); // unknown before
+        Assert.False(Assert.Single(Jobs(S("Elsewhere"), S("Sector A", Ilmenite), NewMissionTests.Cfg(("mining_site_job", "silent")))).Important);
+    }
+
+    [Fact]
+    public void Live_context_names_the_open_job()
+    {
+        var text = S("Sector A", Ilmenite, Ilmenite with { Key = "2", Where = "Done Vessel (Sector A)", Done = true }).ToContext();
+        Assert.Contains("Job here: Industrial Command Vessel (Sector A) wants 6,000 Ilmenite Ore in its 'CargoDrop' container for 200,000 credits (needs Polaris Neutral standing); one time per player.", text);
+        Assert.DoesNotContain("Done Vessel", text);
+    }
+
+    static string? Cargo(string json) => GameView.SiteCargoLine(JsonDocument.Parse(json).RootElement);
+
+    [Fact]
+    public void Cargo_warning_below_125_percent_of_the_load()
+    {
+        Assert.Equal("Cargo warning: the load takes about 30k of cargo volume, but the harvest controllers on 'Miner' have only 32k free; suggest emptying them first or bringing a bigger hold.",
+            Cargo("""{"ok":true,"needL":30000,"space":{"ok":true,"structure":"Miner","harvestControllers":2,"capacityL":60000,"usedL":28000,"freeL":32000}}"""));
+        Assert.Equal("The load takes about 30k of cargo volume; the harvest controllers on 'Miner' have 40k free, enough.",
+            Cargo("""{"ok":true,"needL":30000,"space":{"ok":true,"structure":"Miner","harvestControllers":2,"capacityL":60000,"usedL":20000,"freeL":40000}}"""));
+        Assert.Equal("The load takes about 3k of cargo volume; 'Shuttle' has no harvest controller, so it would all go by hand or another ship.",
+            Cargo("""{"ok":true,"needL":3000,"space":{"ok":true,"structure":"Shuttle","harvestControllers":0,"freeL":0}}"""));
+        Assert.Contains("about 96k of cargo volume; the harvest controllers on 'Zeus' have 640k free", // dev check: 6,000 Ilmenite vs. 2 controllers
+            Cargo("""{"ok":true,"needL":96000,"space":{"ok":true,"structure":"Zeus","harvestControllers":2,"capacityL":640000,"usedL":0,"freeL":640000}}""")!);
+        Assert.Contains("about 2.5k of cargo", Cargo("""{"ok":true,"needL":2500,"space":{"ok":true,"structure":"S","harvestControllers":1,"freeL":100000}}""")!);
+        Assert.Null(Cargo("""{"ok":true,"needL":3000,"space":{"ok":false,"error":"not on a ship"}}"""));
+    }
+}
+
+public class ItemsReadyTests
+{
+    static readonly MissionNeed Comms = new("CommunicationEquipment", "Communication Equipment", 12);
+    static readonly MissionNeed Xenon = new("XenonGasBottle", "Xenon Gas Bottle", 50);
+    const string Line = "Solaris-AMP Factory (Planet A) wants 12 Communication Equipment + 50 Xenon Gas Bottle to unlock its trades";
+
+    [Fact]
+    public void Ready_when_everything_is_in_reach_says_what_to_move()
+    {
+        var e = GameEvents.ItemsReady(Line, [(Comms, 12, 12), (Xenon, 10, 60)])!;
+        Assert.Equal("PursuedItemsReady", e.Name);
+        Assert.True(e.Important);
+        Assert.Equal("Everything the pursued mission wants is in reach now: " + Line + ". To hand it in, the items must be in the player's inventory; " +
+                     "still to move there: 40 Xenon Gas Bottle. Offer to move them (empyrion_transfer_items).", e.Description);
+    }
+
+    [Fact]
+    public void All_in_the_inventory_is_ready_to_hand_in()
+    {
+        Assert.EndsWith("All of it is in the player's inventory: ready to hand in.", GameEvents.ItemsReady(Line, [(Comms, 12, 12), (Xenon, 50, 50)])!.Description);
+    }
+
+    [Fact]
+    public void Missing_items_or_off_give_nothing_silent_is_quiet()
+    {
+        Assert.Null(GameEvents.ItemsReady(Line, [(Comms, 12, 12), (Xenon, 10, 49)]));
+        Assert.Null(GameEvents.ItemsReady(Line, []));
+        Assert.Null(GameEvents.ItemsReady(Line, [(Comms, 12, 12)], NewMissionTests.Cfg(("pursued_items_ready", "off"))));
+        var silent = GameEvents.ItemsReady(Line, [(Comms, 0, 12)], NewMissionTests.Cfg(("pursued_items_ready", "silent")))!;
+        Assert.False(silent.Important);
+        Assert.DoesNotContain("Offer to move", silent.Description);
+    }
+}

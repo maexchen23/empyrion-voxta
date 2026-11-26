@@ -17,6 +17,10 @@ namespace VoxtaBridge
         public int Credits;
         /// <summary>Reputation with <see cref="Faction"/> on hand-in.</summary>
         public int Reputation;
+        /// <summary>The dialogue branch suffix ("Colonist", "Trader"), close to the faction's key in Factions.ecf.</summary>
+        public string Branch;
+        /// <summary>How likely the refinery picks this one from its faction's loot group (LootGroups.ecf), 0 = unknown.</summary>
+        public double Weight;
     }
 
     /// <summary>
@@ -45,13 +49,55 @@ namespace VoxtaBridge
         static readonly Regex Assign = new Regex(@"(\w+)\s*=\s*'?([\w ]+?)'?\s*(?:;|$)", RegexOptions.Compiled);
         static readonly Regex Cooldown = new Regex(@"(\w+)\s*=\s*\(?\s*GetGameTimeInSec\(\)\s*\+\s*(\d+)", RegexOptions.Compiled);
 
+        /// <summary>
+        /// The dialogues that lead to the contract offer (<c>…Offer_Init</c> and every dialogue whose Next/OptionNext reaches it
+        /// within a few steps, e.g. a refinery NPC's greeting): a prefab using one of them hands out contracts.
+        /// </summary>
+        public HashSet<string> OfferEntryDialogues { get; } = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The dialogues that lead to the contract hand-in (<c>Eden_ContractMining_Init</c>), each with the per-POI variable
+        /// that must be 1 on the way there (e.g. a mining-site vessel takes contracts once its own quest is done), or null
+        /// when the way is open. A prefab using one of them is a hand-in point.
+        /// </summary>
+        public Dictionary<string, string> HandInEntryDialogues { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        static readonly Regex PerPoiDecl = new Regex(@"Variable_\d+:\s*""(\w+)""\s*,\s*param1:\s*dbplayerpoi\w*", RegexOptions.Compiled);
+        static readonly Regex GateEq = new Regex(@"^(\w+)\s*==\s*1$", RegexOptions.Compiled);
+
+        /// <summary>Reverse walk from a dialogue (3 steps): name → gate (null = reachable without a per-POI condition).</summary>
+        static Dictionary<string, string> Walk(Dictionary<string, List<(string parent, string gate)>> parents, string start, bool exists)
+        {
+            var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (!exists) return seen;
+            seen[start] = null;
+            var frontier = new List<string> { start };
+            for (var depth = 0; depth < 3 && frontier.Count > 0; depth++)
+            {
+                var next = new List<string>();
+                foreach (var child in frontier)
+                {
+                    if (!parents.TryGetValue(child, out var ps)) continue;
+                    foreach (var (parent, gate) in ps)
+                    {
+                        var g = gate ?? seen[child];
+                        if (!seen.TryGetValue(parent, out var had)) { seen[parent] = g; next.Add(parent); }
+                        else if (had != null && g == null) { seen[parent] = null; next.Add(parent); }
+                    }
+                }
+                frontier = next;
+            }
+            return seen;
+        }
+
         /// <summary>The per-player, per-refinery dialogue variable that holds the next time a contract is offered; it changes whenever one is given.</summary>
         public string CooldownVar { get; private set; }
         static readonly Regex TierGate = new Regex(@"GetReputation\(Faction\.(\w+)\)\s*>=\s*Reputation\.(\w+)", RegexOptions.Compiled);
 
         public void LoadDialogues(TextReader reader)
         {
-            var blocks = TradeMissions.ReadBlocks(reader).Where(b => b.Name.StartsWith(Prefix, StringComparison.Ordinal)).ToList();
+            var allBlocks = TradeMissions.ReadBlocks(reader);
+            var blocks = allBlocks.Where(b => b.Name.StartsWith(Prefix, StringComparison.Ordinal)).ToList();
             var byName = blocks.GroupBy(b => b.Name).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
             // the greeting's options: faction branch → faction name
@@ -61,8 +107,26 @@ namespace VoxtaBridge
                     var faction = RepFaction.Match(value);
                     var next = greet.Same("OptionNext", key)?.Split(',')[0].Trim();
                     if (faction.Success && next != null && byName.TryGetValue(next, out var branch))
-                        ReadBranch(branch, faction.Groups[1].Value);
+                        ReadBranch(branch, faction.Groups[1].Value, next.Substring(Prefix.Length).TrimStart('_'));
                 }
+
+            // which dialogues lead to the offer and to the hand-in: reverse Next/OptionNext edges, a few steps deep
+            var perPoi = new HashSet<string>(allBlocks.SelectMany(x => x.Lines).Select(l => PerPoiDecl.Match(l.key + ": " + l.value))
+                .Where(m => m.Success).Select(m => m.Groups[1].Value), StringComparer.Ordinal);
+            var parents = new Dictionary<string, List<(string parent, string gate)>>(StringComparer.Ordinal);
+            foreach (var b in allBlocks)
+                foreach (var (key, value) in b.Lines.Where(l => l.key.StartsWith("Next_", StringComparison.Ordinal) || l.key.StartsWith("OptionNext_", StringComparison.Ordinal)))
+                {
+                    var target = value.Split(',')[0].Trim();
+                    // a per-POI "Var == 1" condition on this edge gates the way (e.g. "quest done here")
+                    var cond = b.Same(key.StartsWith("Next_", StringComparison.Ordinal) ? "NextIf" : "OptionIf", key);
+                    string gate = null;
+                    if (cond != null && GateEq.Match(cond.Trim().Trim('"')) is Match g && g.Success && perPoi.Contains(g.Groups[1].Value)) gate = g.Groups[1].Value;
+                    if (!parents.TryGetValue(target, out var list)) parents[target] = list = new List<(string, string)>();
+                    list.Add((b.Name, gate));
+                }
+            foreach (var n in Walk(parents, Prefix + "Offer_Init", byName.ContainsKey(Prefix + "Offer_Init")).Keys) OfferEntryDialogues.Add(n);
+            foreach (var kv in Walk(parents, Prefix + "_Init", allBlocks.Any(x => x.Name == Prefix + "_Init"))) HandInEntryDialogues[kv.Key] = kv.Value;
 
             // how the refinery hands contracts out: cooldown after one is given, faction choice from a reputation tier
             foreach (var b in blocks.Where(b => b.Name.StartsWith(Prefix + "Offer_", StringComparison.Ordinal)))
@@ -87,13 +151,13 @@ namespace VoxtaBridge
                 }
         }
 
-        void ReadBranch(TradeMissions.Block branch, string faction)
+        void ReadBranch(TradeMissions.Block branch, string faction, string branchName)
         {
             foreach (var ex in branch.All("OptionExecute"))
             {
                 var v = Assign.Matches(ex.Trim().Trim('"')).Cast<Match>().GroupBy(m => m.Groups[1].Value).ToDictionary(g => g.Key, g => g.First().Groups[2].Value.Trim());
                 if (!v.TryGetValue("TokenID", out var tok) || !int.TryParse(tok, out var tokenId)) continue;
-                var c = new MiningContract { TokenId = tokenId, Faction = faction };
+                var c = new MiningContract { TokenId = tokenId, Faction = faction, Branch = branchName };
                 foreach (var n in new[] { "Ore", "Ore2", "Ore3" })
                     if (v.TryGetValue(n + "Type", out var item) && v.TryGetValue(n + "Count", out var cnt) && int.TryParse(cnt, out var count))
                         c.Ores.Add((item, count));
@@ -101,6 +165,46 @@ namespace VoxtaBridge
                 if (v.TryGetValue("RewardCredit", out var cr)) int.TryParse(cr, out c.Credits);
                 if (v.TryGetValue("RewardRepCount", out var rp)) int.TryParse(rp, out c.Reputation);
                 byToken[tokenId] = c;
+            }
+        }
+
+        static readonly Regex LootHead = new Regex(@"^\{\s*\+?LootGroup\s+Name:\s*(\S+)", RegexOptions.Compiled);
+        static readonly Regex LootToken = new Regex(@"^\s*Item_\d+:\s*Token\s*,\s*param1:\s*""?meta=(\d+)""?\s*,\s*param2:\s*([\d.]+)", RegexOptions.Compiled);
+
+        /// <summary>
+        /// The pick weights of the contract tokens from LootGroups.ecf (<c>Item_0: Token, param1: "meta=6800", param2: 0.5</c>):
+        /// a refinery draws one token from a faction's group, rare contracts have a lower weight. Returns how many were set.
+        /// </summary>
+        public int LoadLootGroups(TextReader reader)
+        {
+            var set = 0;
+            string line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (LootHead.IsMatch(line)) continue;
+                var m = LootToken.Match(line);
+                if (!m.Success || !int.TryParse(m.Groups[1].Value, out var id) || !byToken.TryGetValue(id, out var c)) continue;
+                if (double.TryParse(m.Groups[2].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var w))
+                {
+                    c.Weight = w;
+                    set++;
+                }
+            }
+            return set;
+        }
+
+        /// <summary>Names to look the contract's faction up by in Factions.ecf: "Polaris Megacorp" → Polaris, branch "Colonist" → Colonists.</summary>
+        public static IEnumerable<string> FactionKeys(MiningContract c)
+        {
+            if (c.Faction != null)
+            {
+                yield return c.Faction;
+                yield return c.Faction.Split(' ')[0];
+            }
+            if (!string.IsNullOrEmpty(c.Branch))
+            {
+                yield return c.Branch;
+                yield return c.Branch + "s";
             }
         }
 

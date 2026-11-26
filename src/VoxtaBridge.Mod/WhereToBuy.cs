@@ -70,10 +70,17 @@ namespace VoxtaBridge
                         Log($"trade missions: {missions.Count} trader mission dialogues");
                         var contracts = new MiningContracts();
                         using (var r = new StreamReader(dlg)) contracts.LoadDialogues(r);
+                        var loot = Cfg("LootGroups.ecf");
+                        if (loot != null) using (var r = new StreamReader(loot)) Log($"mining contract weights: {contracts.LoadLootGroups(r)}");
                         miningContracts = contracts;
                         using (var r = new StreamReader(dlg)) questDropNames = MiningContracts.DropContainerNames(r).ToArray();
                         Log($"quest hand-in containers: {string.Join(", ", questDropNames)}");
                         Log($"mining contracts: {contracts.Count} contracts, cooldown {contracts.CooldownSeconds} s");
+                        LoadPdaRepeats(content, scenario, dlg);
+                        var sites = new SiteMissions();
+                        using (var r = new StreamReader(dlg)) sites.LoadDialogues(r);
+                        siteMissions = sites;
+                        Log($"site jobs: {sites.Count} ({string.Join(", ", sites.All.Select(s => $"{string.Join("+", s.Needs.Select(n => $"{n.Count} {n.Item}"))}"))})");
                     }
                 }
                 catch (Exception e) { Log($"poi terminals: {e.Message}"); }
@@ -86,6 +93,12 @@ namespace VoxtaBridge
                             try { idx.LoadPlayfield(Path.GetFileName(dir), File.ReadAllText(f)); }
                             catch (Exception e) { Log($"traders: {f}: {e.Message}"); }
 
+                // dialogues to find in the prefabs: the mining contract ones, and mission starts not named TD_…_Start (e.g. a foreman)
+                var watch = new List<string>();
+                if (miningContracts is MiningContracts mcw) watch.AddRange(mcw.OfferEntryDialogues.Concat(mcw.HandInEntryDialogues.Keys));
+                if (tradeMissions is TradeMissions tmw) watch.AddRange(tmw.Families.Select(f => f.Start).Where(s => !s.StartsWith("TD_", StringComparison.Ordinal)));
+                if (siteMissions is SiteMissions smw) watch.AddRange(smw.All.Select(m => m.Start));
+                idx.WatchDialogues = watch;
                 int scanned = 0, failed = 0;
                 // scenario prefabs first; base-game prefabs (e.g. BA_CrashedCV_…) only fill gaps, for the POI classification
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -102,6 +115,31 @@ namespace VoxtaBridge
                     }
                 }
                 traderIndex = idx;
+                if (siteMissions is SiteMissions smp)
+                {
+                    var sp = new Dictionary<string, SiteMission>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var prefab in idx.PrefabsWithWatchedDialogues)
+                        if (idx.Facts(prefab).WatchedDialogues.Select(smp.ByStart).FirstOrDefault(m => m != null) is SiteMission m) sp[prefab] = m;
+                    sitePrefabs = sp;
+                    Log($"site jobs: {sp.Count} prefabs ({string.Join(", ", sp.Keys.OrderBy(x => x).Take(10))})");
+                }
+                if (miningContracts is MiningContracts mcp)
+                {
+                    var offers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var handIn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var prefab in idx.PrefabsWithWatchedDialogues)
+                    {
+                        var used = idx.Facts(prefab).WatchedDialogues;
+                        if (used.Any(mcp.OfferEntryDialogues.Contains)) offers.Add(prefab);
+                        var gates = used.Where(mcp.HandInEntryDialogues.ContainsKey).Select(d => mcp.HandInEntryDialogues[d]).ToList();
+                        // an open way wins over a gated one
+                        if (gates.Count > 0) handIn[prefab] = gates.Any(g => g == null) ? null : gates.First();
+                    }
+                    contractPrefabs = offers;
+                    handInPrefabs = handIn;
+                    Log($"mining contracts: {offers.Count} prefabs hand them out ({string.Join(", ", offers.OrderBy(x => x).Take(8))}); " +
+                        $"{handIn.Count} take them in ({string.Join(", ", handIn.OrderBy(x => x.Key).Take(10).Select(x => x.Key + (x.Value != null ? $" once {x.Value}" : "")))})");
+                }
                 try
                 {
                     var odds = new GalaxyOdds();

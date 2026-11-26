@@ -222,6 +222,7 @@ namespace VoxtaBridge
                         case "probe": result = ExecuteProbe(req); break;
                         case "find": result = ExecuteFind(req); break;
                         case "mining-scan": result = ExecuteMiningScan(req); break;
+                        case "harvest-space": result = ExecuteHarvestSpace(req); break;
                         case "craft": result = ExecuteCraft(req); break;
                         case "jump": result = ExecuteJump(req); break;
                         case "microjump": result = ExecuteMicroJump(req); break;

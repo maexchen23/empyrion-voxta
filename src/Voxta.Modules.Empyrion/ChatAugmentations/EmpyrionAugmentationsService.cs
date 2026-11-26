@@ -45,6 +45,7 @@ public class EmpyrionAugmentationsService(
                     new AugmentationToolDeclaration(EmpyrionConstants.PoiTerminalTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.ListQuestsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.MiningContractsTool, EmpyrionConstants.ContextKey),
+                    new AugmentationToolDeclaration(EmpyrionConstants.CooldownsTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.PursueQuestTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.SendToChatTool, EmpyrionConstants.ContextKey),
                     new AugmentationToolDeclaration(EmpyrionConstants.MarkStarsTool, EmpyrionConstants.ContextKey),

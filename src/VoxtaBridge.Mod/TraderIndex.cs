@@ -133,6 +133,26 @@ namespace VoxtaBridge
 
         static readonly Regex TurretName = new Regex(@"(?:Turret|SentryGun)[A-Za-z0-9]*", RegexOptions.Compiled);
         static readonly Regex PoiDialogueName = new Regex(@"POI_[A-Za-z0-9_]+?_Init", RegexOptions.Compiled);
+        Regex watchRegex;
+
+        /// <summary>
+        /// Dialogue names to look for in the prefabs (set before adding prefabs); each prefab that uses one lists it in
+        /// <see cref="PoiFacts.WatchedDialogues"/>. Used for the dialogues that lead to a mining contract offer.
+        /// </summary>
+        public IEnumerable<string> WatchDialogues
+        {
+            set
+            {
+                var names = value?.Where(n => !string.IsNullOrEmpty(n)).Distinct().OrderByDescending(n => n.Length).ToList();
+                watchRegex = names == null || names.Count == 0 ? null
+                    : new Regex(@"(?<![A-Za-z0-9_])(?:" + string.Join("|", names.Select(Regex.Escape)) + @")(?![A-Za-z0-9_])", RegexOptions.Compiled);
+            }
+        }
+
+        /// <summary>Prefabs whose text uses one of the watched dialogues.</summary>
+        public IEnumerable<string> PrefabsWithWatchedDialogues =>
+            prefabFacts.Values.Where(f => f.WatchedDialogues.Count > 0).Select(f => f.Prefab);
+
         static readonly Regex TradeDialogueName = new Regex(@"TD_[A-Za-z0-9]+_Start", RegexOptions.Compiled);
 
         /// <summary>Facts from a prefab's header alone (cheap; no traders or dialogues): group, name, tag, size in blocks, turret types.</summary>
@@ -170,6 +190,9 @@ namespace VoxtaBridge
             {
                 if (facts.PoiDialogue == null) { var m = PoiDialogueName.Match(text); if (m.Success) facts.PoiDialogue = m.Value; }
                 if (!facts.HasGin && text.IndexOf("GIN_Console", StringComparison.Ordinal) >= 0) facts.HasGin = true;
+                if (watchRegex != null)
+                    foreach (Match m in watchRegex.Matches(text))
+                        if (!facts.WatchedDialogues.Contains(m.Value)) facts.WatchedDialogues.Add(m.Value);
                 if (text.IndexOf("TD_", StringComparison.Ordinal) >= 0)
                     foreach (Match m in TradeDialogueName.Matches(text))
                         if (!facts.TradeDialogues.Contains(m.Value)) facts.TradeDialogues.Add(m.Value);
